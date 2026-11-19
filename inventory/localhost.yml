@@ -1,0 +1,11 @@
+---
+# "Local mode": the repository is cloned ON the server and Ansible manages the
+# machine it runs on. No SSH connection is made by Ansible at all.
+#   ansible-playbook -i inventory/localhost.yml site.yml -K
+all:
+  children:
+    hardening_targets:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3

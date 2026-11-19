@@ -1,0 +1,15 @@
+---
+# Copy this file to inventory/hosts.yml (git-ignored) and fill in your server.
+#   cp inventory/hosts.example.yml inventory/hosts.yml
+#
+# This is for running FROM another machine (e.g. WSL on your laptop).
+# Running ON the server itself? Use inventory/localhost.yml instead.
+all:
+  children:
+    hardening_targets:
+      hosts:
+        mail:                                  # any short name you like
+          ansible_host: 203.0.113.10           # your server's IP or DNS name
+          ansible_user: emre                   # your non-root sudo user
+          ansible_port: 22                     # your current SSH port
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
