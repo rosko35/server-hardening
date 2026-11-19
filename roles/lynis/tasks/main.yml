@@ -112,4 +112,6 @@
     msg:
       - "Lynis hardening index ({{ lynis_label }}): {{ lynis_hardening_index | default('n/a') }} / 100"
       - "Report: {{ harden_report_dir }}/{{ inventory_hostname }}/lynis-{{ lynis_label }}.md"
-      - "{{ 'Comparison: ' ~ harden_report_dir ~ '/' ~ inventory_hostname ~ '/lynis-comparison.md' if lynis_label == 'after' else 'Next: apply categories one at a time, then make lynis-after' }}"
+      - >-
+        {{ 'Comparison: ' ~ harden_report_dir ~ '/' ~ inventory_hostname ~ '/lynis-comparison.md'
+           if lynis_label == 'after' else 'Next: apply categories one at a time, then make lynis-after' }}

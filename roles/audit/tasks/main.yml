@@ -169,7 +169,9 @@
 - name: Audit | Summary
   ansible.builtin.debug:
     msg:
-      - "Findings: {{ audit_summary.critical }} critical, {{ audit_summary.high }} high, {{ audit_summary.medium }} medium, {{ audit_summary.low }} low, {{ audit_summary.info }} info"
+      - >-
+        Findings: {{ audit_summary.critical }} critical, {{ audit_summary.high }} high,
+        {{ audit_summary.medium }} medium, {{ audit_summary.low }} low, {{ audit_summary.info }} info
       - "Report: {{ audit_report_dir }}/audit-report.md"
       - "{% for f in audit_findings if f.severity in ['critical', 'high'] %}[{{ f.severity | upper }}] {{ f.title }} -> {{ f.toggle }} | {% endfor %}"
       - "Nothing on the server was changed by the audit."

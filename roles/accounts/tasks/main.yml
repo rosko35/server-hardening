@@ -27,7 +27,11 @@
     - name: Accounts | Show findings
       ansible.builtin.debug:
         msg:
-          - "login.defs changes: {% for k, v in accounts_login_defs_wanted | dictsort %}{% if accounts_login_defs_current.get(k, '') != v | string %}{{ k }} {{ accounts_login_defs_current.get(k, 'unset') }} -> {{ v }}; {% endif %}{% endfor %}"
+          - >-
+            login.defs changes: {% for k, v in accounts_login_defs_wanted | dictsort %}
+            {% if accounts_login_defs_current.get(k, '') != v | string %}
+            {{ k }} {{ accounts_login_defs_current.get(k, 'unset') }} -> {{ v }};
+            {% endif %}{% endfor %}
           - "System accounts with a login shell: {{ accounts_system_shells | map(attribute='name') | list }}"
 
 - name: Accounts | Apply (only with accounts_apply=true)

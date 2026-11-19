@@ -28,7 +28,10 @@
     - name: Sysctl | Show differences
       ansible.builtin.debug:
         msg: >-
-          {% for k, v in sysctl_network_desired | dictsort %}{% if (sysctl_network_current[k] | default('?') | string) != (v | string) %}{{ k }}: {{ sysctl_network_current[k] | default('?') }} -> {{ v }}; {% endif %}{% else %}nothing{% endfor %}
+          Would change: {% for k, v in sysctl_network_desired | dictsort %}
+          {% if (sysctl_network_current[k] | default('?') | string) != (v | string) %}
+          {{ k }}: {{ sysctl_network_current[k] | default('?') }} -> {{ v }};
+          {% endif %}{% endfor %}
 
     - name: Sysctl | Note about routing
       ansible.builtin.debug:

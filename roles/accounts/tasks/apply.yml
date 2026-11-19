@@ -55,5 +55,7 @@
   ansible.builtin.debug:
     msg:
       - "login.defs updated (affects accounts created from now on)."
-      - "Locked shells: {{ accounts_system_shells | map(attribute='name') | list if accounts_lock_system_shells | bool else 'none (accounts_lock_system_shells=false)' }}"
+      - >-
+        Locked shells: {{ accounts_system_shells | map(attribute='name') | list
+        if accounts_lock_system_shells | bool else 'none (accounts_lock_system_shells=false)' }}
       - "Undo: make rollback CONFIRM=1 CATEGORIES=accounts"

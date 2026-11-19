@@ -42,17 +42,13 @@
 - name: Firewall | Show what is listening publicly
   ansible.builtin.debug:
     msg: >-
-      {% for l in firewall_listeners | public_listeners %}{{ l.port }}/{{ l.proto }} {{ l.process }} ({{ l.category }}){{ ', ' if not loop.last else '' }}{% else %}nothing{% endfor %}
+      Public listeners: {% for l in firewall_listeners | public_listeners %}
+      {{ l.port }}/{{ l.proto }} {{ l.process }} ({{ l.category }}){{ ',' if not loop.last else '' }}
+      {% else %}none{% endfor %}
 
 - name: Firewall | Show the proposed ufw rule set
   ansible.builtin.debug:
-    msg:
-      - "ufw installed={{ firewall_ufw_installed }} active={{ firewall_ufw_active }}"
-      - "Allow list (firewall_allowed_ports): {{ firewall_allowed_ports | default([]) }}"
-      - "Suggested starting point from what is listening: {{ firewall_suggested_ports }}"
-      - "Rules that WOULD be added, in order: {% for r in firewall_plan_preview.rules %}{{ r.port }}/{{ r.proto }} {% endfor %}"
-      - "Errors: {{ firewall_plan_preview.errors }}"
-      - "Warnings: {{ firewall_plan_preview.warnings }}"
+    msg: "{{ lookup('ansible.builtin.template', 'ufw-plan.txt.j2').splitlines() }}"
 
 - name: Firewall | LOUD WARNING - mail or web would be cut off
   ansible.builtin.debug:

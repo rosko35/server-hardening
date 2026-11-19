@@ -1,0 +1,5 @@
+# Lynis Report
+report_version_major=1
+lynis_version=3.1.4
+hostname=broken
+warning[]=only-two-fields|message without trailing pipes

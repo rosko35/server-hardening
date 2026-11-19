@@ -1,0 +1,26 @@
+ufw today: installed={{ firewall_ufw_installed | bool }} active={{ firewall_ufw_active | bool }}
+Allow list (firewall_allowed_ports): {{ firewall_allowed_ports | default([]) | join(', ') or '(empty)' }}
+Suggested from what listens publicly: {{ firewall_suggested_ports | join(', ') }}
+{% if firewall_plan_preview.errors %}
+PLAN REFUSED:
+{%   for e in firewall_plan_preview.errors %}
+  - {{ e }}
+{%   endfor %}
+{% else %}
+Commands firewall_apply=true would run, in this order:
+{%   for r in firewall_plan_preview.rules %}
+  {{ loop.index }}. ufw allow {{ r.port }}/{{ r.proto }}   # {{ r.comment }}
+{%   endfor %}
+  {{ firewall_plan_preview.rules | length + 1 }}. ufw default allow outgoing
+  {{ firewall_plan_preview.rules | length + 2 }}. ufw default deny incoming
+  {{ firewall_plan_preview.rules | length + 3 }}. ufw enable
+{% endif %}
+{% if firewall_plan_preview.would_close %}
+Publicly listening ports that would be BLOCKED:
+{%   for w in firewall_plan_preview.would_close %}
+  - {{ w.spec }} {{ w.process }}{{ ' (' ~ w.service_hint ~ ')' if w.service_hint else '' }}: {{ 'acknowledged' if w.acknowledged else 'NOT acknowledged -> apply will refuse' }}
+{%   endfor %}
+{% endif %}
+{% for w in firewall_plan_preview.warnings %}
+WARNING: {{ w }}
+{% endfor %}
