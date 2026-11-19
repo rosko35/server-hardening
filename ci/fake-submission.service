@@ -1,0 +1,10 @@
+[Unit]
+Description=Stand-in for a mail submission service listening on port 587 (CI only)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 -m http.server 587 --bind 0.0.0.0 --directory /srv
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

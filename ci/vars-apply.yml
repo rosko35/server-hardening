@@ -1,0 +1,7 @@
+---
+# CI apply run: what the operator of the test container would put in host vars.
+# The web port is allowed, the stand-in mail port 587 is deliberately closed
+# (and acknowledged), so the test can prove the firewall really filters.
+firewall_allowed_ports: ["22/tcp", "80/tcp"]
+firewall_acknowledge_closing: ["587/tcp"]
+accounts_lock_system_shells: true

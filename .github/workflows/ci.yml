@@ -1,0 +1,133 @@
+---
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PY_COLORS: "1"
+  ANSIBLE_FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: Lint (yamllint, ruff, ansible-lint, syntax-check)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt "ansible-core>=2.16,<2.18" "ansible-lint>=24.2"
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: yamllint
+        run: yamllint -s .
+
+      - name: ruff
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: ansible-lint
+        run: ansible-lint
+
+      - name: Playbook syntax check
+        run: ansible-playbook -i inventory/localhost.yml --syntax-check site.yml lynis.yml rollback.yml
+
+      - name: Shell scripts
+        run: bash -n ci/*.sh
+
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -v
+
+  integration:
+    name: Integration (${{ matrix.name }})
+    needs: [lint, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04
+            base: ubuntu:24.04
+          - name: Debian 12
+            base: debian:12
+    env:
+      # Throw-away password for the disposable test container only.
+      CI_PASSWORD: ci-throwaway-password-not-secret
+      ANSIBLE_FORCE_COLOR: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible and test tools
+        run: |
+          pip install "ansible-core>=2.16,<2.18"
+          ansible-galaxy collection install -r requirements.yml
+          sudo apt-get update -q && sudo apt-get install -y -q sshpass
+
+      - name: Build the test target image (${{ matrix.base }})
+        run: docker build -t hardening-target --build-arg BASE=${{ matrix.base }} ci/
+
+      - name: Start the systemd container
+        run: |
+          docker run -d --name target --hostname mail.example.test \
+            --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            --tmpfs /run --tmpfs /run/lock \
+            -p 2222:22 -p 8080:80 -p 2587:587 \
+            hardening-target
+
+      - name: Prepare operator account (SSH key + password)
+        run: bash ci/prepare-target.sh
+
+      - name: Run integration stages
+        run: bash ci/integration.sh
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "::group::systemctl --failed"; docker exec target systemctl --failed --no-pager || true; echo "::endgroup::"
+          echo "::group::sshd -T"; docker exec target sshd -T || true; echo "::endgroup::"
+          echo "::group::ufw status"; docker exec target ufw status verbose || true; echo "::endgroup::"
+          echo "::group::journal (last 200 lines)"; docker exec target journalctl -n 200 --no-pager || true; echo "::endgroup::"
+          echo "::group::backups"; docker exec target find /var/backups/server-hardening -type f || true; echo "::endgroup::"
+
+      - name: Upload logs and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-${{ matrix.base == 'debian:12' && 'debian12' || 'ubuntu2404' }}
+          path: |
+            ci/logs/
+            reports/
+          if-no-files-found: ignore

@@ -144,27 +144,34 @@
     audit_summary: "{{ audit_findings | findings_summary }}"
     audit_report_dir: "{{ harden_report_dir }}/{{ inventory_hostname }}"
 
+# The report lives on the control machine, not on the server. It is marked
+# changed_when: false so "changed" in the PLAY RECAP only ever means "the server
+# was changed" (this is what the idempotence test relies on).
 - name: Audit | Write reports on the control machine
   delegate_to: localhost
   become: false
+  check_mode: false # the report is wanted even for a --check run
   block:
     - name: Audit | Create the report directory
       ansible.builtin.file:
         path: "{{ audit_report_dir }}"
         state: directory
         mode: "0700"
+      changed_when: false
 
     - name: Audit | Write the Markdown report
       ansible.builtin.template:
         src: report.md.j2
         dest: "{{ audit_report_dir }}/audit-report.md"
         mode: "0600"
+      changed_when: false
 
     - name: Audit | Write the JSON report
       ansible.builtin.copy:
         content: "{{ {'summary': audit_summary, 'findings': audit_findings, 'data': audit_data} | to_nice_json }}\n"
         dest: "{{ audit_report_dir }}/audit-report.json"
         mode: "0600"
+      changed_when: false
 
 - name: Audit | Summary
   ansible.builtin.debug:
