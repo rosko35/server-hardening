@@ -1,0 +1,12 @@
+---
+profile: production
+
+exclude_paths:
+  - .venv/
+  - .github/
+  - tests/
+  - reports/
+  - ci/
+
+# The filter plugin lives next to the playbooks (filter_plugins/), which is a
+# supported Ansible location; ansible-lint loads it through ansible.cfg.

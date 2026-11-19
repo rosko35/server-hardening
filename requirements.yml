@@ -1,0 +1,9 @@
+---
+# Ansible collections used by the roles.
+# The Ubuntu/Debian "ansible" apt package already ships them;
+# with plain ansible-core run: ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.general
+    version: ">=8.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0"

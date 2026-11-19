@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Ansible
+*.retry
+.ansible/
+
+# Real inventory (contains your server address and user) - never commit it
+inventory/hosts.yml
+inventory/*.local.yml
+host_vars/
+
+# Generated output
+reports/
+backups/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

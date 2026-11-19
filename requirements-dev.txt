@@ -1,0 +1,8 @@
+# Local / CI development tools (not needed on the server)
+pytest>=8.0
+yamllint>=1.35
+ruff>=0.6
+Jinja2>=3.1
+# CI only (ansible-core does not run on native Windows):
+# ansible-core>=2.16
+# ansible-lint>=24.2

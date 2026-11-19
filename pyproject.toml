@@ -1,0 +1,18 @@
+[project]
+name = "server-hardening"
+version = "1.0.0"
+description = "Audit-first Ansible hardening for Ubuntu 24.04 / Debian 12 with before/after Lynis scoring"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
