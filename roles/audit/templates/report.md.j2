@@ -6,8 +6,8 @@
 |---|---|
 | Host | `{{ audit_data.hostname | md_cell }}` ({{ audit_data.os | md_cell }}, kernel {{ audit_data.kernel | md_cell }}) |
 | Connected as | `{{ audit_data.operator.user | md_cell }}` from `{{ audit_data.operator.ip | default('?', true) | md_cell }}` on SSH port {{ audit_data.ssh_port }} |
-| Authorized key verified | {{ 'yes - ' ~ (audit_data.operator.key_files | join(', ')) if audit_data.operator.has_verified_key else '**NO** - do not disable password login yet' }} |
-| sshd -t | {{ 'OK' if audit_data.sshd_valid else '**FAILED**' }} |
+| Authorized key verified | {{ 'yes - ' ~ (audit_data.operator.key_files | join(', ')) if audit_data.operator.has_verified_key | bool else '**NO** - do not disable password login yet' }} |
+| sshd -t | {{ 'OK' if audit_data.sshd_valid | bool else '**FAILED**' }} |
 
 ## Summary
 
@@ -30,7 +30,7 @@
 | Port | Proto | Program | Reachable from | Category |
 |---:|---|---|---|---|
 {% for l in audit_data.listeners %}
-| {{ l.port }} | {{ l.proto }} | {{ l.process | md_cell }} | {{ 'internet (' ~ (l.addresses | join(', ')) ~ ')' if l.public else 'this machine only' }} | {{ l.category }} |
+| {{ l.port }} | {{ l.proto }} | {{ l.process | md_cell }} | {{ 'internet (' ~ (l.addresses | join(', ')) ~ ')' if l.public | bool else 'this machine only' }} | {{ l.category }} |
 {% else %}
 | - | | (could not read listeners) | | |
 {% endfor %}
@@ -72,7 +72,7 @@ Remove anything that should NOT be reachable from the internet before using it.
 ## Updates
 
 - Pending updates: {{ audit_data.updates.total }} (security: {{ audit_data.updates.security }}) - based on the last `apt update`.
-- Reboot required: {{ 'yes' if audit_data.reboot_required else 'no' }}
+- Reboot required: {{ 'yes' if audit_data.reboot_required | bool else 'no' }}
 - unattended-upgrades installed: {{ audit_data.unattended.installed }}, enabled: {{ audit_data.unattended.enabled }}
 
 ## Accounts
