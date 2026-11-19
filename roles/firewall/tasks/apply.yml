@@ -113,7 +113,7 @@
 - name: Firewall | Verify the SSH port is allowed
   ansible.builtin.assert:
     that:
-      - firewall_status_after.stdout is search('(?m)^' ~ common_ssh_port ~ '/tcp\s+ALLOW')
+      - firewall_status_after.stdout is search('(?m)^' ~ common_ssh_port ~ '/tcp +ALLOW')
     fail_msg: >-
       ufw does not show an ALLOW rule for SSH port {{ common_ssh_port }}! Keep this session open and run:
       sudo ufw allow {{ common_ssh_port }}/tcp   (or: sudo ufw disable)

@@ -102,7 +102,7 @@
       updates:
         total: "{{ audit_apt.stdout_lines | length }}"
         security: "{{ audit_apt.stdout_lines | select('search', '-security') | list | length }}"
-        packages: "{{ audit_apt.stdout_lines | map('regex_replace', '^Inst (\\S+).*$', '\\1') | list }}"
+        packages: "{{ audit_apt.stdout_lines | map('regex_search', '^Inst [^ ]+') | map('replace', 'Inst ', '') | list }}"
       reboot_required: "{{ audit_reboot.stat.exists }}"
       unattended:
         installed: "{{ auto_updates_installed | default(false) | bool }}"

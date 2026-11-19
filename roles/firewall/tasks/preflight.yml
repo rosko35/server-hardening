@@ -52,8 +52,10 @@
 
 - name: Firewall | LOUD WARNING - mail or web would be cut off
   ansible.builtin.debug:
-    msg: "!!!!!!!! {{ item }} !!!!!!!!"
+    msg: "!!!!!!!! {{ firewall_warning }} !!!!!!!!"
   loop: "{{ firewall_plan_preview.warnings | select('search', '^!!!') | list }}"
+  loop_control:
+    loop_var: firewall_warning
   when: firewall_allowed_ports | default([]) | length > 0
 
 - name: Firewall | Docker warning

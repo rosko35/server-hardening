@@ -87,7 +87,8 @@
   ansible.builtin.set_fact:
     lynis_hardening_index: >-
       {{ lookup('ansible.builtin.file', harden_report_dir ~ '/' ~ inventory_hostname ~ '/lynis-' ~ lynis_label ~ '.dat')
-         | regex_search('hardening_index=(\d+)', '\1') | default(['n/a'], true) | first }}
+         | regex_search('hardening_index=[0-9]+') | default('hardening_index=n/a', true)
+         | replace('hardening_index=', '') }}
   when: not ansible_check_mode
 
 - name: Lynis | Compare with the "before" run
