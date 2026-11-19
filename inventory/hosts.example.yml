@@ -13,3 +13,9 @@ all:
           ansible_user: emre                   # your non-root sudo user
           ansible_port: 22                     # your current SSH port
           ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+
+          # Server-specific settings go here (they override group_vars/all.yml).
+          # Only needed for the firewall. Copy the list the audit report suggests,
+          # then remove anything that must NOT be reachable from the internet.
+          # firewall_allowed_ports: ["22/tcp", "80/tcp", "443/tcp", "25/tcp", "465/tcp", "587/tcp", "993/tcp"]
+          # firewall_acknowledge_closing: []
