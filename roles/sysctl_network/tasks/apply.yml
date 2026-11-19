@@ -1,0 +1,49 @@
+---
+- name: Sysctl | Never touch forwarding
+  ansible.builtin.assert:
+    that:
+      - sysctl_network_desired.keys() | select('search', 'forwarding|ip_forward') | list | length == 0
+    fail_msg: "ip_forward / forwarding keys are not allowed here - they can break Docker, VPNs and routing."
+    quiet: true
+
+- name: Sysctl | Remember the current runtime values (once, for rollback)
+  ansible.builtin.copy:
+    content: |
+      # Runtime values before server-hardening changed them. Rollback: sysctl -p <this file>
+      {% for k in sysctl_network_desired.keys() | sort %}
+      {% if k in sysctl_network_current %}
+      {{ k }} = {{ sysctl_network_current[k] }}
+      {% endif %}
+      {% endfor %}
+    dest: "{{ harden_backup_root }}/state/sysctl-previous.conf"
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Sysctl | Back up the drop-in
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: backup
+    apply:
+      tags: [always]
+  vars:
+    common_backup_target: /etc/sysctl.d/60-server-hardening.conf # noqa: var-naming[no-role-prefix]
+
+- name: Sysctl | Write /etc/sysctl.d/60-server-hardening.conf
+  ansible.builtin.template:
+    src: 60-server-hardening.conf.j2
+    dest: /etc/sysctl.d/60-server-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Load sysctl settings
+
+- name: Sysctl | Load the settings now
+  ansible.builtin.meta: flush_handlers
+
+- name: Sysctl | Done
+  ansible.builtin.debug:
+    msg:
+      - "Network sysctl settings applied (runtime + persistent)."
+      - "Undo: make rollback CONFIRM=1 CATEGORIES=sysctl"

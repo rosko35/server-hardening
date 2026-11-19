@@ -1,0 +1,96 @@
+---
+- name: SSH | Stop here if a lock-out safety check failed
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_blockers | length == 0
+    fail_msg: "Nothing was changed. {{ ssh_hardening_blockers | join(' | ') }}"
+    success_msg: "Safety checks passed (key verified: {{ common_operator_key_files | join(', ') | default('n/a', true) }})"
+
+- name: SSH | Back up the drop-in before changing it
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: backup
+    apply:
+      tags: [always]
+  vars:
+    common_backup_target: "{{ ssh_hardening_dropin }}" # noqa: var-naming[no-role-prefix]
+
+- name: SSH | Write and verify the hardening drop-in
+  block:
+    - name: SSH | Write drop-in (validated with sshd -t before it is put in place)
+      ansible.builtin.template:
+        src: sshd_hardening.conf.j2
+        dest: "{{ ssh_hardening_dropin }}"
+        owner: root
+        group: root
+        mode: "0600"
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Reload sshd safely
+
+    - name: SSH | Validate the COMPLETE configuration (main file + all drop-ins)
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: SSH | Read the effective configuration after the change
+      ansible.builtin.command: /usr/sbin/sshd -T
+      register: ssh_hardening_after
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: SSH | Check that every managed setting is really in effect
+      ansible.builtin.assert:
+        that:
+          - ssh_hardening_mismatch | length == 0
+        fail_msg: >-
+          Another sshd config file overrides these settings: {{ ssh_hardening_mismatch | join('; ') }}.
+          Look for files sorting before 01-server-hardening.conf in /etc/ssh/sshd_config.d/.
+        quiet: true
+      vars:
+        ssh_hardening_mismatch: "{{ ssh_hardening_after.stdout | sshd_effective | sshd_mismatches(ssh_hardening_managed) }}"
+      when: not ansible_check_mode
+
+  rescue:
+    - name: SSH | Look for the original drop-in backup
+      ansible.builtin.stat:
+        path: "{{ harden_backup_root }}/originals{{ ssh_hardening_dropin }}"
+      register: ssh_hardening_orig
+
+    - name: SSH | Restore the original drop-in
+      ansible.builtin.copy:
+        src: "{{ harden_backup_root }}/originals{{ ssh_hardening_dropin }}"
+        dest: "{{ ssh_hardening_dropin }}"
+        remote_src: true
+        mode: preserve
+      when: ssh_hardening_orig.stat.exists
+
+    - name: SSH | Remove the new drop-in (it did not exist before)
+      ansible.builtin.file:
+        path: "{{ ssh_hardening_dropin }}"
+        state: absent
+      when: not ssh_hardening_orig.stat.exists
+
+    - name: SSH | Confirm the restored configuration validates
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: SSH | Stop with an explanation
+      ansible.builtin.fail:
+        msg: >-
+          SSH hardening was rolled back automatically and sshd was NOT reloaded, so your
+          running SSH service is unchanged. Reason: {{ ansible_failed_result.msg | default(ansible_failed_result) }}
+
+- name: SSH | Reload sshd now (reload keeps existing sessions open)
+  ansible.builtin.meta: flush_handlers
+
+- name: SSH | Drop the cached connection so the next task logs in fresh
+  ansible.builtin.meta: reset_connection
+
+- name: SSH | Prove a NEW login works with the new settings
+  ansible.builtin.ping:
+
+- name: SSH | Done
+  ansible.builtin.debug:
+    msg:
+      - "SSH hardening applied. Your current session stayed open (reload, not restart)."
+      - "Test a NEW login from your computer in a second terminal before closing this one."
+      - "Undo: make rollback CONFIRM=1 CATEGORIES=ssh  (or: sudo rm {{ ssh_hardening_dropin }} && sudo systemctl reload ssh)"

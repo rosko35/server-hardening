@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: firewall
+  author: Emre Özaydın
+  description: Opt-in ufw built from the services that are actually listening
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+dependencies: []

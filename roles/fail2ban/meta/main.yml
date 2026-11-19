@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: fail2ban
+  author: Emre Özaydın
+  description: fail2ban sshd jail that never bans the operator
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+dependencies: []

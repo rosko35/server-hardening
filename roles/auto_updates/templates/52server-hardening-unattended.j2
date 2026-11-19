@@ -1,0 +1,29 @@
+// {{ ansible_managed }}
+// server-hardening: install SECURITY updates only, never reboot.
+// Read after 50unattended-upgrades; "#clear" drops whatever origins it enabled.
+// Undo: sudo rm /etc/apt/apt.conf.d/52server-hardening-unattended
+#clear Unattended-Upgrade::Allowed-Origins;
+#clear Unattended-Upgrade::Origins-Pattern;
+Unattended-Upgrade::Origins-Pattern {
+{% if ansible_facts['distribution'] == 'Ubuntu' %}
+        "origin=Ubuntu,archive=${distro_codename}-security,label=Ubuntu";
+        "origin=UbuntuESMApps,archive=${distro_codename}-apps-security";
+        "origin=UbuntuESM,archive=${distro_codename}-infra-security";
+{% else %}
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+        "origin=Debian,codename=${distro_codename},label=Debian-Security";
+{% endif %}
+};
+{% if auto_updates_package_blacklist | length > 0 %}
+Unattended-Upgrade::Package-Blacklist {
+{%   for pkg in auto_updates_package_blacklist %}
+        "{{ pkg }}";
+{%   endfor %}
+};
+{% endif %}
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
+{% if auto_updates_mail | length > 0 %}
+Unattended-Upgrade::Mail "{{ auto_updates_mail }}";
+Unattended-Upgrade::MailReport "only-on-error";
+{% endif %}

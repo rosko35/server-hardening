@@ -1,0 +1,38 @@
+---
+# Restores what server-hardening changed, from {{ harden_backup_root }}.
+# Without rollback_confirm=true it only lists the planned actions.
+- name: Rollback | Find backed-up originals
+  ansible.builtin.find:
+    paths: "{{ harden_backup_root }}/originals"
+    recurse: true
+    hidden: true
+    file_type: file
+  register: rollback_found
+
+- name: Rollback | Which categories (accepts a list or "ssh,firewall")
+  ansible.builtin.set_fact:
+    rollback_wanted: >-
+      {{ (rollback_categories.split(',') if rollback_categories is string else rollback_categories)
+         | map('trim') | list }}
+
+- name: Rollback | Work out the file actions
+  ansible.builtin.set_fact:
+    rollback_plan: >-
+      {{ rollback_found.files | map(attribute='path') | list
+         | rollback_actions(harden_backup_root ~ '/originals', rollback_wanted) }}
+
+- name: Rollback | Planned file actions
+  ansible.builtin.debug:
+    msg: "{% for a in rollback_plan %}{{ a.action | upper }} {{ a.target }} [{{ a.category }}]; {% else %}no file backups found{% endfor %}"
+
+- name: Rollback | Dry listing only
+  ansible.builtin.debug:
+    msg: "Nothing restored. Re-run with -e rollback_confirm=true (make rollback CONFIRM=1) to restore."
+  when: not (rollback_confirm | bool)
+
+- name: Rollback | Restore
+  ansible.builtin.include_tasks:
+    file: restore.yml
+    apply:
+      tags: [always]
+  when: rollback_confirm | bool

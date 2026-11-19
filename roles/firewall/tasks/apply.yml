@@ -1,0 +1,118 @@
+---
+- name: Firewall | Refuse an empty allow list
+  ansible.builtin.assert:
+    that:
+      - firewall_allowed_ports | default([]) | length > 0
+    fail_msg: >-
+      Nothing was changed. firewall_allowed_ports is empty - enabling a firewall with an empty
+      allow list would lock you out. Suggested from what is listening now: {{ firewall_suggested_ports }}
+
+- name: Firewall | Refuse a plan that has errors or would silently close listening services
+  ansible.builtin.assert:
+    that:
+      - firewall_plan_preview.ok
+    fail_msg: >-
+      Nothing was changed. Errors: {{ firewall_plan_preview.errors }}.
+      Publicly listening ports that would be BLOCKED (not in firewall_allowed_ports and not in
+      firewall_acknowledge_closing): {{ firewall_plan_preview.unacknowledged | map(attribute='spec') | list }}.
+      {{ firewall_plan_preview.warnings | join(' ') }}
+
+- name: Firewall | Final plan (strict - raises if anything is unsafe)
+  ansible.builtin.set_fact:
+    firewall_final_plan: >-
+      {{ firewall_listeners
+         | firewall_plan(firewall_allowed_ports, common_ssh_port, firewall_acknowledge_closing, strict=true) }}
+
+- name: Firewall | Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Firewall | Remember whether ufw was active before (once)
+  ansible.builtin.copy:
+    content: "{{ 'active' if firewall_ufw_active | bool else 'inactive' }}\n"
+    dest: "{{ harden_backup_root }}/state/ufw-previous-state"
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Firewall | Back up ufw configuration files
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: backup
+    apply:
+      tags: [always]
+  vars:
+    common_backup_target: "{{ firewall_backup_item }}" # noqa: var-naming[no-role-prefix]
+  loop:
+    - /etc/default/ufw
+    - /etc/ufw/ufw.conf
+    - /etc/ufw/user.rules
+    - /etc/ufw/user6.rules
+  loop_control:
+    loop_var: firewall_backup_item
+
+- name: Firewall | Configure and enable ufw
+  # In --check mode on a machine without ufw there is nothing to simulate against.
+  when: not (ansible_check_mode and not (firewall_ufw_installed | bool))
+  block:
+    - name: Firewall | IPv6 filtering setting
+      ansible.builtin.lineinfile:
+        path: /etc/default/ufw
+        regexp: '^IPV6='
+        line: "IPV6={{ 'yes' if firewall_ipv6 | bool else 'no' }}"
+
+    - name: Firewall | Add allow rules (current SSH port FIRST)
+      community.general.ufw:
+        rule: allow
+        port: "{{ firewall_rule.port }}"
+        proto: "{{ firewall_rule.proto }}"
+        comment: "{{ firewall_rule.comment }}"
+      loop: "{{ firewall_final_plan.rules }}"
+      loop_control:
+        loop_var: firewall_rule
+        label: "{{ firewall_rule.port }}/{{ firewall_rule.proto }}"
+
+    - name: Firewall | Default policy - allow outgoing
+      community.general.ufw:
+        default: allow
+        direction: outgoing
+
+    - name: Firewall | Default policy - deny incoming (allow rules are already in place)
+      community.general.ufw:
+        default: deny
+        direction: incoming
+
+    - name: Firewall | Log blocked packets (low volume)
+      community.general.ufw:
+        logging: "low"
+
+    - name: Firewall | Enable ufw
+      community.general.ufw:
+        state: enabled
+
+- name: Firewall | Read ufw status after the change
+  ansible.builtin.command: ufw status
+  register: firewall_status_after
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Firewall | Verify the SSH port is allowed
+  ansible.builtin.assert:
+    that:
+      - firewall_status_after.stdout is search('(?m)^' ~ common_ssh_port ~ '/tcp\s+ALLOW')
+    fail_msg: >-
+      ufw does not show an ALLOW rule for SSH port {{ common_ssh_port }}! Keep this session open and run:
+      sudo ufw allow {{ common_ssh_port }}/tcp   (or: sudo ufw disable)
+  when: not ansible_check_mode
+
+- name: Firewall | Done
+  ansible.builtin.debug:
+    msg:
+      - "ufw enabled with {{ firewall_final_plan.rules | length }} allow rule(s)."
+      - "Test a NEW SSH login and your website / mail from outside before closing this session."
+      - "Undo: make rollback CONFIRM=1 CATEGORIES=firewall   (or: sudo ufw disable)"

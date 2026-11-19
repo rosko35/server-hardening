@@ -1,0 +1,45 @@
+---
+- name: Lynis | Install the distribution package
+  ansible.builtin.apt:
+    name: lynis
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: lynis_install_method == 'package'
+
+- name: Lynis | Install the pinned upstream release
+  when: lynis_install_method == 'upstream'
+  block:
+    - name: Lynis | Require a pinned checksum
+      ansible.builtin.assert:
+        that:
+          - lynis_upstream_sha256 | length == 64
+        fail_msg: >-
+          lynis_upstream_sha256 must be set to the published SHA-256 of lynis-{{ lynis_upstream_version }}.tar.gz
+          (see https://cisofy.com/downloads/lynis/). Refusing to download unverified code.
+
+    - name: Lynis | Install directory
+      ansible.builtin.file:
+        path: /opt/server-hardening
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Lynis | Download tarball (verified against the pinned checksum)
+      ansible.builtin.get_url:
+        url: "{{ lynis_upstream_url }}"
+        dest: "/opt/server-hardening/lynis-{{ lynis_upstream_version }}.tar.gz"
+        checksum: "sha256:{{ lynis_upstream_sha256 }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Lynis | Unpack
+      ansible.builtin.unarchive:
+        src: "/opt/server-hardening/lynis-{{ lynis_upstream_version }}.tar.gz"
+        dest: /opt/server-hardening
+        remote_src: true
+        owner: root
+        group: root
+        creates: /opt/server-hardening/lynis/lynis

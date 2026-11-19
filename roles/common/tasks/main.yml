@@ -1,0 +1,133 @@
+---
+# Read-only preflight shared by every playbook. Sets common_* facts:
+#   common_operator_user / common_operator_ip  - who is running this, from where
+#   common_ssh_port                            - port of the CURRENT ssh session
+#   common_sshd_valid / common_sshd_effective  - is sshd config sane right now
+#   common_operator_has_key                    - verified authorized key present
+- name: Common | Check that the target runs a supported OS
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+    fail_msg: >-
+      This project supports Ubuntu 24.04 and Debian 12 only. Found
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}.
+    quiet: true
+
+- name: Common | Warn about untested OS versions
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: tested on Ubuntu 24.04 and Debian 12 only, this is
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}. Audit is safe; be extra careful applying.
+  when: >-
+    not ((ansible_facts['distribution'] == 'Ubuntu' and ansible_facts['distribution_version'] == '24.04')
+    or (ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] == '12'))
+
+- name: Common | Detect the operator (login user, sudo user, SSH client)
+  ansible.builtin.shell: >-
+    printf '{"user":"%s","sudo_user":"%s","ssh_client":"%s"}'
+    "$(id -un)" "${SUDO_USER:-}" "${SSH_CLIENT:-}"
+  become: false
+  register: common_whoami
+  changed_when: false
+  check_mode: false
+
+- name: Common | Set operator facts
+  ansible.builtin.set_fact:
+    common_operator_user: >-
+      {{ harden_operator_user if (harden_operator_user | length > 0)
+         else (common_who.sudo_user if (common_who.user == 'root' and common_who.sudo_user | length > 0)
+         else common_who.user) }}
+    common_operator_ip: >-
+      {{ harden_operator_ip if (harden_operator_ip | length > 0)
+         else (common_who.ssh_client.split(' ')[0] if common_who.ssh_client | length > 0 else '') }}
+    common_session_port: >-
+      {{ common_who.ssh_client.split(' ')[2] if (common_who.ssh_client.split(' ') | length) == 3 else '' }}
+  vars:
+    common_who: "{{ common_whoami.stdout | from_json }}"
+
+- name: Common | Look up the operator account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ common_operator_user }}"
+    fail_key: false
+
+- name: Common | Ensure the sshd privilege separation directory exists (runtime dir, needed by sshd -t)
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  changed_when: false
+  check_mode: false
+
+- name: Common | Validate the current sshd configuration (sshd -t)
+  ansible.builtin.command: /usr/sbin/sshd -t
+  register: common_sshd_test
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Common | Read the effective sshd configuration (sshd -T)
+  ansible.builtin.command: /usr/sbin/sshd -T
+  register: common_sshd_dump
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Common | Check that sshd_config includes sshd_config.d
+  ansible.builtin.command: grep -Eiq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config
+  register: common_sshd_include
+  changed_when: false
+  failed_when: common_sshd_include.rc > 1
+  check_mode: false
+
+- name: Common | Set SSH facts
+  ansible.builtin.set_fact:
+    common_sshd_valid: "{{ common_sshd_test.rc == 0 }}"
+    common_sshd_error: "{{ common_sshd_test.stderr | default('') }}"
+    common_sshd_effective: "{{ common_sshd_dump.stdout | default('') | sshd_effective }}"
+    common_sshd_include_ok: "{{ common_sshd_include.rc == 0 }}"
+    common_operator_home: >-
+      {{ (ansible_facts['getent_passwd'][common_operator_user][4])
+         if (ansible_facts['getent_passwd'][common_operator_user] | default(none)) is not none else '' }}
+
+- name: Common | Set SSH port of the current session
+  ansible.builtin.set_fact:
+    common_ssh_port: >-
+      {{ common_session_port if common_session_port | length > 0
+         else (common_sshd_effective | sshd_value('port', ansible_port | default(22) | string)) }}
+
+- name: Common | Verify an authorized key exists for the operator
+  ansible.builtin.shell: |
+    set -u
+    for f in {{ common_key_paths | map('quote') | join(' ') }}; do
+      if [ -f "$f" ] && ssh-keygen -l -f "$f" >/dev/null 2>&1; then
+        echo "$f"
+      fi
+    done
+    exit 0
+  vars:
+    common_key_paths: >-
+      {{ (common_sshd_effective | sshd_value('authorizedkeysfile', '.ssh/authorized_keys'))
+         | authorized_keys_paths(common_operator_user, common_operator_home) }}
+  register: common_key_check
+  changed_when: false
+  check_mode: false
+  when: common_operator_home | length > 0
+
+- name: Common | Set key verification fact
+  ansible.builtin.set_fact:
+    common_operator_key_files: "{{ common_key_check.stdout_lines | default([]) }}"
+    common_operator_has_key: >-
+      {{ (common_key_check.stdout_lines | default([]) | length > 0)
+         and (common_sshd_effective | sshd_value('pubkeyauthentication', 'yes')) == 'yes' }}
+
+- name: Common | Show what was detected
+  ansible.builtin.debug:
+    msg:
+      - "Operator user        : {{ common_operator_user }} (home: {{ common_operator_home | default('?', true) }})"
+      - "Operator IP          : {{ common_operator_ip | default('not detected', true) }}"
+      - "SSH port (session)   : {{ common_ssh_port }}"
+      - "sshd -t              : {{ 'OK' if common_sshd_valid else 'FAILED - ' ~ common_sshd_error }}"
+      - "Authorized key found : {{ common_operator_key_files | join(', ') if common_operator_has_key else 'NO' }}"

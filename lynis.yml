@@ -1,0 +1,15 @@
+---
+# Independent score with Lynis.
+#   ansible-playbook lynis.yml -e lynis_label=before -e lynis_apply=true   # installs Lynis if missing
+#   ansible-playbook lynis.yml -e lynis_label=after
+# Reports land in reports/<host>/lynis-<label>.{dat,md}; after the "after"
+# run, reports/<host>/lynis-comparison.md holds the before/after table.
+- name: Lynis audit
+  hosts: hardening_targets
+  become: true
+  gather_facts: true
+  roles:
+    - role: common
+      tags: [always]
+    - role: lynis
+      tags: [lynis]

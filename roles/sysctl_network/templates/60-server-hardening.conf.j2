@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+#
+# server-hardening: conservative network settings.
+# Never touches ip_forward, so Docker / VPN routing keeps working.
+# Undo: sudo rm /etc/sysctl.d/60-server-hardening.conf
+#       sudo sysctl -p {{ harden_backup_root }}/state/sysctl-previous.conf
+{% for key, value in sysctl_network_desired | dictsort %}
+{{ key }} = {{ value }}
+{% endfor %}

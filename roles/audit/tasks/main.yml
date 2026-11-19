@@ -1,0 +1,175 @@
+---
+# Read-only. Every task here either only reads (check_mode: false so it also
+# runs under --check) or writes the report on the CONTROL machine.
+# Facts from the other roles' preflight steps (they run before this role) are
+# reused; missing ones are tolerated via default().
+
+- name: Audit | Pending package updates (simulation only, uses the last 'apt update')
+  ansible.builtin.shell: |
+    set -o pipefail
+    apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null | grep '^Inst' || true
+  args:
+    executable: /bin/bash
+  register: audit_apt
+  changed_when: false
+  check_mode: false
+
+- name: Audit | Reboot required?
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+    get_checksum: false
+  register: audit_reboot
+
+- name: Audit | Members of admin groups (sudo, admin, wheel)
+  ansible.builtin.command: getent group sudo admin wheel
+  register: audit_sudo_groups
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Audit | NOPASSWD sudo rules
+  ansible.builtin.shell: |
+    set -o pipefail
+    grep -rhE '^[^#]*NOPASSWD' /etc/sudoers /etc/sudoers.d/ 2>/dev/null | sed 's/[[:space:]]\+/ /g' || true
+  args:
+    executable: /bin/bash
+  register: audit_nopasswd
+  changed_when: false
+  check_mode: false
+
+- name: Audit | World-writable files on the root filesystem (bounded)
+  ansible.builtin.shell: |
+    set -o pipefail
+    timeout {{ audit_find_timeout | int }} find / -xdev -type f -perm -0002 \
+      -not -path '/proc/*' -not -path '/sys/*' 2>/dev/null | head -n {{ audit_find_limit | int }} || true
+  args:
+    executable: /bin/bash
+  register: audit_world_writable
+  changed_when: false
+  check_mode: false
+
+- name: Audit | SUID/SGID binaries on the root filesystem (bounded)
+  ansible.builtin.shell: |
+    set -o pipefail
+    timeout {{ audit_find_timeout | int }} find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
+      2>/dev/null | head -n {{ audit_find_limit | int }} || true
+  args:
+    executable: /bin/bash
+  register: audit_suid
+  changed_when: false
+  check_mode: false
+
+- name: Audit | Failed systemd units
+  ansible.builtin.command: systemctl list-units --state=failed --no-legend --plain # noqa: command-instead-of-module
+  register: audit_failed_units
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Audit | Is Lynis installed?
+  ansible.builtin.shell: command -v lynis || test -x /opt/server-hardening/lynis/lynis
+  register: audit_lynis
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Audit | Assemble raw audit data
+  ansible.builtin.set_fact:
+    audit_data:
+      generated: "{{ ansible_facts['date_time']['iso8601'] }}"
+      host: "{{ inventory_hostname }}"
+      hostname: "{{ ansible_facts['fqdn'] | default(ansible_facts['hostname']) }}"
+      os: "{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+      kernel: "{{ ansible_facts['kernel'] }}"
+      operator:
+        user: "{{ common_operator_user }}"
+        ip: "{{ common_operator_ip }}"
+        has_verified_key: "{{ common_operator_has_key | bool }}"
+        key_files: "{{ common_operator_key_files }}"
+      ssh_port: "{{ common_ssh_port }}"
+      sshd: "{{ common_sshd_effective }}"
+      sshd_valid: "{{ common_sshd_valid | bool }}"
+      sshd_error: "{{ common_sshd_error }}"
+      ssh_blockers: "{{ ssh_hardening_blockers | default([]) }}"
+      listeners: "{{ firewall_listeners | default([]) }}"
+      ufw:
+        installed: "{{ firewall_ufw_installed | default(false) | bool }}"
+        active: "{{ firewall_ufw_active | default(false) | bool }}"
+        status: "{{ firewall_ufw_status.stdout | default('') }}"
+      nft_rule_lines: "{{ firewall_nft_rule_lines | default(0) | int }}"
+      firewall_plan: "{{ firewall_plan_preview if (firewall_allowed_ports | length > 0) else {} }}"
+      firewall_suggested_ports: "{{ firewall_suggested_ports | default([]) }}"
+      updates:
+        total: "{{ audit_apt.stdout_lines | length }}"
+        security: "{{ audit_apt.stdout_lines | select('search', '-security') | list | length }}"
+        packages: "{{ audit_apt.stdout_lines | map('regex_replace', '^Inst (\\S+).*$', '\\1') | list }}"
+      reboot_required: "{{ audit_reboot.stat.exists }}"
+      unattended:
+        installed: "{{ auto_updates_installed | default(false) | bool }}"
+        enabled: "{{ auto_updates_enabled | default(false) | bool }}"
+      fail2ban:
+        installed: "{{ fail2ban_installed | default(false) | bool }}"
+        active: "{{ fail2ban_active | default(false) | bool }}"
+      login_users: "{{ accounts_entries | default([]) | login_accounts }}"
+      uid0_accounts: "{{ accounts_entries | default([]) | selectattr('uid', 'equalto', 0) | map(attribute='name') | list }}"
+      sudo_groups: "{{ audit_sudo_groups.stdout_lines }}"
+      nopasswd_sudo: "{{ audit_nopasswd.stdout_lines }}"
+      system_shell_accounts: "{{ accounts_system_shells | default([]) }}"
+      login_defs: "{{ accounts_login_defs_current | default({}) }}"
+      login_defs_desired: "{{ accounts_login_defs_wanted | default({}) }}"
+      world_writable: "{{ audit_world_writable.stdout_lines }}"
+      suid: "{{ audit_suid.stdout_lines }}"
+      failed_units: "{{ audit_failed_units.stdout_lines | map('split') | map('first') | list }}"
+      file_modes: "{{ file_permissions_plan | default([]) }}"
+      sysctl: "{{ sysctl_network_current | default({}) }}"
+      sysctl_desired: "{{ sysctl_network_desired | default({}) }}"
+      lynis_installed: "{{ audit_lynis.rc == 0 }}"
+      toggles:
+        ssh_hardening_apply: "{{ ssh_hardening_apply }}"
+        firewall_apply: "{{ firewall_apply }}"
+        auto_updates_apply: "{{ auto_updates_apply }}"
+        fail2ban_apply: "{{ fail2ban_apply }}"
+        sysctl_network_apply: "{{ sysctl_network_apply }}"
+        accounts_apply: "{{ accounts_apply }}"
+        accounts_lock_system_shells: "{{ accounts_lock_system_shells }}"
+        file_permissions_apply: "{{ file_permissions_apply }}"
+        lynis_apply: "{{ lynis_apply }}"
+
+- name: Audit | Turn raw data into findings
+  ansible.builtin.set_fact:
+    audit_findings: "{{ audit_data | build_findings }}"
+
+- name: Audit | Summarise findings
+  ansible.builtin.set_fact:
+    audit_summary: "{{ audit_findings | findings_summary }}"
+    audit_report_dir: "{{ harden_report_dir }}/{{ inventory_hostname }}"
+
+- name: Audit | Write reports on the control machine
+  delegate_to: localhost
+  become: false
+  block:
+    - name: Audit | Create the report directory
+      ansible.builtin.file:
+        path: "{{ audit_report_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Audit | Write the Markdown report
+      ansible.builtin.template:
+        src: report.md.j2
+        dest: "{{ audit_report_dir }}/audit-report.md"
+        mode: "0600"
+
+    - name: Audit | Write the JSON report
+      ansible.builtin.copy:
+        content: "{{ {'summary': audit_summary, 'findings': audit_findings, 'data': audit_data} | to_nice_json }}\n"
+        dest: "{{ audit_report_dir }}/audit-report.json"
+        mode: "0600"
+
+- name: Audit | Summary
+  ansible.builtin.debug:
+    msg:
+      - "Findings: {{ audit_summary.critical }} critical, {{ audit_summary.high }} high, {{ audit_summary.medium }} medium, {{ audit_summary.low }} low, {{ audit_summary.info }} info"
+      - "Report: {{ audit_report_dir }}/audit-report.md"
+      - "{% for f in audit_findings if f.severity in ['critical', 'high'] %}[{{ f.severity | upper }}] {{ f.title }} -> {{ f.toggle }} | {% endfor %}"
+      - "Nothing on the server was changed by the audit."

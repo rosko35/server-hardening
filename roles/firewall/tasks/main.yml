@@ -1,0 +1,19 @@
+---
+- name: Firewall | Preflight (read-only, always runs)
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [audit]
+
+- name: Firewall | Apply (only with firewall_apply=true)
+  ansible.builtin.include_tasks:
+    file: apply.yml
+    apply:
+      tags: [always]
+  when: firewall_apply | bool
+
+- name: Firewall | Audit-only notice
+  ansible.builtin.debug:
+    msg: >-
+      AUDIT ONLY - nothing changed. To apply: set firewall_allowed_ports, preview with
+      'make apply-firewall CHECK=1', then 'make apply-firewall'.
+  when: not (firewall_apply | bool)
+  tags: [audit]

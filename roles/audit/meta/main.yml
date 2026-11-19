@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: audit
+  author: Emre Özaydın
+  description: Read-only audit that renders a Markdown + JSON findings report on the control machine
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+dependencies: []

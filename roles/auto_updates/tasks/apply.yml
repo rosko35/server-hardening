@@ -1,0 +1,71 @@
+---
+- name: Auto-updates | Refuse automatic reboots
+  ansible.builtin.assert:
+    that:
+      - not (auto_updates_automatic_reboot | bool)
+    fail_msg: "This project never reboots a server automatically. Set auto_updates_automatic_reboot: false."
+    quiet: true
+
+- name: Auto-updates | Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Auto-updates | Back up the files we manage
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: backup
+    apply:
+      tags: [always]
+  vars:
+    common_backup_target: "{{ auto_updates_backup_item }}" # noqa: var-naming[no-role-prefix]
+  loop:
+    - /etc/apt/apt.conf.d/21server-hardening-periodic
+    - /etc/apt/apt.conf.d/52server-hardening-unattended
+  loop_control:
+    loop_var: auto_updates_backup_item
+
+- name: Auto-updates | Enable the daily run (sorts after 20auto-upgrades, so it wins)
+  ansible.builtin.template:
+    src: 21server-hardening-periodic.j2
+    dest: /etc/apt/apt.conf.d/21server-hardening-periodic
+    owner: root
+    group: root
+    mode: "0644"
+    validate: apt-config -c %s dump
+
+- name: Auto-updates | Restrict to security updates, no reboot
+  ansible.builtin.template:
+    src: 52server-hardening-unattended.j2
+    dest: /etc/apt/apt.conf.d/52server-hardening-unattended
+    owner: root
+    group: root
+    mode: "0644"
+    validate: apt-config -c %s dump
+
+- name: Auto-updates | Make sure the apt timers are enabled
+  ansible.builtin.systemd_service:
+    name: "{{ auto_updates_timer }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  loop_control:
+    loop_var: auto_updates_timer
+  when: not ansible_check_mode or auto_updates_installed | bool
+
+- name: Auto-updates | Show the effective origins
+  ansible.builtin.command: apt-config dump Unattended-Upgrade::Origins-Pattern
+  register: auto_updates_origins
+  changed_when: false
+  check_mode: false
+
+- name: Auto-updates | Done
+  ansible.builtin.debug:
+    msg:
+      - "Automatic security updates enabled (no automatic reboot). Effective origins:"
+      - "{{ auto_updates_origins.stdout_lines }}"
+      - "Log: /var/log/unattended-upgrades/unattended-upgrades.log   Test: sudo unattended-upgrade --dry-run -d"

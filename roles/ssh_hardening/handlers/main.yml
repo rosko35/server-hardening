@@ -1,0 +1,14 @@
+---
+- name: Reload sshd safely
+  ansible.builtin.shell: |
+    set -eu
+    /usr/sbin/sshd -t
+    for unit in ssh sshd; do
+      if systemctl is-active --quiet "$unit"; then
+        systemctl reload "$unit"
+        echo "reloaded $unit"
+        exit 0
+      fi
+    done
+    echo "ssh service not running (socket activation) - settings apply to the next connection"
+  changed_when: true

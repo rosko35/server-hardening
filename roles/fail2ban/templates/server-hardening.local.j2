@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+#
+# server-hardening: brute-force protection for SSH.
+# Addresses in ignoreip are NEVER banned - your own connection IP is included.
+# Unban:  sudo fail2ban-client set sshd unbanip <ip>
+# Undo:   sudo rm /etc/fail2ban/jail.d/server-hardening.local && sudo systemctl restart fail2ban
+
+[DEFAULT]
+ignoreip = {{ fail2ban_ignoreip | join(' ') }}
+bantime  = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
+
+[sshd]
+enabled = true
+port    = {{ common_ssh_port }}
+# Read the systemd journal: works on Debian 12 (no /var/log/auth.log) and Ubuntu 24.04.
+backend = systemd

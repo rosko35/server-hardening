@@ -1,0 +1,33 @@
+---
+- name: Permissions | Preflight (read-only, always runs)
+  tags: [audit]
+  block:
+    - name: Permissions | Read current modes
+      ansible.builtin.command:
+        argv: "{{ ['stat', '-c', '%n|%a', '--'] + (file_permissions_targets | map(attribute='path') | list) }}"
+      register: file_permissions_stat
+      changed_when: false
+      failed_when: false # missing paths are reported, not fatal
+      check_mode: false
+
+    - name: Permissions | Work out what would change (only ever removes bits)
+      ansible.builtin.set_fact:
+        file_permissions_plan: "{{ file_permissions_stat.stdout | file_mode_plan(file_permissions_targets) }}"
+
+    - name: Permissions | Show differences
+      ansible.builtin.debug:
+        msg: >-
+          {% for p in file_permissions_plan | selectattr('change') %}{{ p.path }} {{ p.mode }} -> {{ p.new_mode }}; {% else %}all modes already OK{% endfor %}
+
+- name: Permissions | Apply (only with file_permissions_apply=true)
+  ansible.builtin.include_tasks:
+    file: apply.yml
+    apply:
+      tags: [always]
+  when: file_permissions_apply | bool
+
+- name: Permissions | Audit-only notice
+  ansible.builtin.debug:
+    msg: "AUDIT ONLY - nothing changed."
+  when: not (file_permissions_apply | bool)
+  tags: [audit]

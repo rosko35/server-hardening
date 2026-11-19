@@ -1,0 +1,59 @@
+---
+- name: Accounts | Back up /etc/login.defs
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: backup
+    apply:
+      tags: [always]
+  vars:
+    common_backup_target: /etc/login.defs # noqa: var-naming[no-role-prefix]
+
+- name: Accounts | Set login.defs values (new accounts only)
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: '^\s*{{ accounts_ld.key }}\s+'
+    line: "{{ accounts_ld.key }}\t{{ accounts_ld.value }}"
+  loop: "{{ accounts_login_defs_wanted | dict2items }}"
+  loop_control:
+    loop_var: accounts_ld
+    label: "{{ accounts_ld.key }}={{ accounts_ld.value }}"
+
+- name: Accounts | Lock login shells of system accounts (second opt-in)
+  when: accounts_lock_system_shells | bool
+  block:
+    - name: Accounts | State directory for previous shells
+      ansible.builtin.file:
+        path: "{{ harden_backup_root }}/state/shells"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Accounts | Remember each previous shell (once, for rollback)
+      ansible.builtin.copy:
+        content: "{{ accounts_sys.shell }}\n"
+        dest: "{{ harden_backup_root }}/state/shells/{{ accounts_sys.name }}"
+        force: false
+        owner: root
+        group: root
+        mode: "0600"
+      loop: "{{ accounts_system_shells }}"
+      loop_control:
+        loop_var: accounts_sys
+        label: "{{ accounts_sys.name }}"
+
+    - name: Accounts | Set shell to /usr/sbin/nologin
+      ansible.builtin.user:
+        name: "{{ accounts_sys.name }}"
+        shell: /usr/sbin/nologin
+      loop: "{{ accounts_system_shells }}"
+      loop_control:
+        loop_var: accounts_sys
+        label: "{{ accounts_sys.name }} ({{ accounts_sys.shell }})"
+
+- name: Accounts | Done
+  ansible.builtin.debug:
+    msg:
+      - "login.defs updated (affects accounts created from now on)."
+      - "Locked shells: {{ accounts_system_shells | map(attribute='name') | list if accounts_lock_system_shells | bool else 'none (accounts_lock_system_shells=false)' }}"
+      - "Undo: make rollback CONFIRM=1 CATEGORIES=accounts"

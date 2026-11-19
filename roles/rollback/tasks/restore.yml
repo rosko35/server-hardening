@@ -1,0 +1,150 @@
+---
+- name: Rollback | Restore original files
+  ansible.builtin.copy:
+    src: "{{ rollback_item.backup }}"
+    dest: "{{ rollback_item.target }}"
+    remote_src: true
+    mode: preserve
+  loop: "{{ rollback_plan | selectattr('action', 'equalto', 'restore') | list }}"
+  loop_control:
+    loop_var: rollback_item
+    label: "{{ rollback_item.target }}"
+
+- name: Rollback | Remove files that server-hardening created
+  ansible.builtin.file:
+    path: "{{ rollback_item.target }}"
+    state: absent
+  loop: "{{ rollback_plan | selectattr('action', 'equalto', 'delete') | list }}"
+  loop_control:
+    loop_var: rollback_item
+    label: "{{ rollback_item.target }}"
+
+# ---- SSH ---------------------------------------------------------------------
+- name: Rollback | SSH - validate and reload (existing sessions stay open)
+  when: "'all' in rollback_wanted or 'ssh' in rollback_wanted"
+  block:
+    - name: Rollback | SSH - validate restored configuration
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Rollback | SSH - reload
+      ansible.builtin.shell: |
+        set -eu
+        for unit in ssh sshd; do
+          if systemctl is-active --quiet "$unit"; then systemctl reload "$unit"; exit 0; fi
+        done
+      changed_when: true
+      when: not ansible_check_mode
+
+# ---- Firewall ----------------------------------------------------------------
+- name: Rollback | Firewall - previous state
+  ansible.builtin.slurp:
+    src: "{{ harden_backup_root }}/state/ufw-previous-state"
+  register: rollback_ufw_state
+  failed_when: false
+  when: "'all' in rollback_wanted or 'firewall' in rollback_wanted"
+
+- name: Rollback | Firewall - disable ufw (it was inactive before)
+  ansible.builtin.command: ufw --force disable
+  changed_when: true
+  when:
+    - "'all' in rollback_wanted or 'firewall' in rollback_wanted"
+    - rollback_ufw_state.content is defined
+    - (rollback_ufw_state.content | b64decode | trim) == 'inactive'
+    - not ansible_check_mode
+
+- name: Rollback | Firewall - reload restored rules (it was active before)
+  ansible.builtin.command: ufw reload
+  changed_when: true
+  when:
+    - "'all' in rollback_wanted or 'firewall' in rollback_wanted"
+    - rollback_ufw_state.content is defined
+    - (rollback_ufw_state.content | b64decode | trim) == 'active'
+    - not ansible_check_mode
+
+# ---- fail2ban ----------------------------------------------------------------
+- name: Rollback | fail2ban - restart with the restored configuration
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted
+  failed_when: false
+  when: "'all' in rollback_wanted or 'fail2ban' in rollback_wanted"
+
+# ---- sysctl ------------------------------------------------------------------
+- name: Rollback | sysctl - check for saved runtime values
+  ansible.builtin.stat:
+    path: "{{ harden_backup_root }}/state/sysctl-previous.conf"
+  register: rollback_sysctl_state
+  when: "'all' in rollback_wanted or 'sysctl' in rollback_wanted"
+
+- name: Rollback | sysctl - restore previous runtime values
+  ansible.builtin.command: sysctl -e -p {{ harden_backup_root }}/state/sysctl-previous.conf
+  changed_when: true
+  when:
+    - "'all' in rollback_wanted or 'sysctl' in rollback_wanted"
+    - rollback_sysctl_state.stat.exists | default(false)
+    - not ansible_check_mode
+
+# ---- accounts: shells --------------------------------------------------------
+- name: Rollback | accounts - find saved shells
+  ansible.builtin.find:
+    paths: "{{ harden_backup_root }}/state/shells"
+    file_type: file
+  register: rollback_shells
+  when: "'all' in rollback_wanted or 'accounts' in rollback_wanted"
+
+- name: Rollback | accounts - read saved shells
+  ansible.builtin.slurp:
+    src: "{{ rollback_shell_file.path }}"
+  register: rollback_shell_contents
+  loop: "{{ rollback_shells.files | default([]) }}"
+  loop_control:
+    loop_var: rollback_shell_file
+    label: "{{ rollback_shell_file.path | basename }}"
+  when: "'all' in rollback_wanted or 'accounts' in rollback_wanted"
+
+- name: Rollback | accounts - restore shells
+  ansible.builtin.user:
+    name: "{{ rollback_shell.rollback_shell_file.path | basename }}"
+    shell: "{{ rollback_shell.content | b64decode | trim }}"
+  loop: "{{ rollback_shell_contents.results | default([]) | selectattr('content', 'defined') | list }}"
+  loop_control:
+    loop_var: rollback_shell
+    label: "{{ rollback_shell.rollback_shell_file.path | basename }}"
+  when: "'all' in rollback_wanted or 'accounts' in rollback_wanted"
+
+# ---- file permissions --------------------------------------------------------
+- name: Rollback | permissions - find saved modes
+  ansible.builtin.find:
+    paths: "{{ harden_backup_root }}/state/perms"
+    file_type: file
+  register: rollback_perms
+  when: "'all' in rollback_wanted or 'file_permissions' in rollback_wanted"
+
+- name: Rollback | permissions - read saved modes
+  ansible.builtin.slurp:
+    src: "{{ rollback_perm_file.path }}"
+  register: rollback_perm_contents
+  loop: "{{ rollback_perms.files | default([]) }}"
+  loop_control:
+    loop_var: rollback_perm_file
+    label: "{{ rollback_perm_file.path | basename }}"
+  when: "'all' in rollback_wanted or 'file_permissions' in rollback_wanted"
+
+- name: Rollback | permissions - restore modes
+  ansible.builtin.file:
+    path: "{{ (rollback_perm.content | b64decode | trim).split('|')[0] }}"
+    mode: "{{ (rollback_perm.content | b64decode | trim).split('|')[1] }}"
+    follow: false
+  loop: "{{ rollback_perm_contents.results | default([]) | selectattr('content', 'defined') | list }}"
+  loop_control:
+    loop_var: rollback_perm
+    label: "{{ (rollback_perm.content | b64decode | trim).split('|')[0] }}"
+  when: "'all' in rollback_wanted or 'file_permissions' in rollback_wanted"
+
+- name: Rollback | Done
+  ansible.builtin.debug:
+    msg:
+      - "Rollback finished for: {{ rollback_wanted | join(', ') }}"
+      - "Installed packages (ufw, fail2ban, unattended-upgrades, lynis) were left installed on purpose."
+      - "Backups are kept in {{ harden_backup_root }} - running rollback again is harmless."

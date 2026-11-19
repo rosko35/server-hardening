@@ -1,0 +1,37 @@
+---
+- name: SSH | Work out which settings will be managed
+  ansible.builtin.set_fact:
+    ssh_hardening_dropin: /etc/ssh/sshd_config.d/01-server-hardening.conf
+    ssh_hardening_managed: >-
+      {{ ssh_hardening_settings | dict2items
+         | rejectattr('value', 'equalto', '') | rejectattr('value', 'none') | items2dict }}
+
+- name: SSH | Never block root login while you are connected as root
+  ansible.builtin.set_fact:
+    ssh_hardening_managed: "{{ ssh_hardening_managed | dict2items | rejectattr('key', 'equalto', 'PermitRootLogin') | items2dict }}"
+  when:
+    - common_operator_user == 'root'
+    - (ssh_hardening_managed.get('PermitRootLogin', '') | string | lower) != 'yes'
+
+- name: SSH | Evaluate lock-out safety checks
+  ansible.builtin.set_fact:
+    ssh_hardening_disables_passwords: >-
+      {{ (ssh_hardening_managed.get('PasswordAuthentication', '') | string | lower) in ['no', 'false']
+         or (ssh_hardening_managed.get('KbdInteractiveAuthentication', '') | string | lower) in ['no', 'false'] }}
+    ssh_hardening_blockers: >-
+      {{ []
+         + (['sshd -t fails on the CURRENT configuration: ' ~ common_sshd_error] if not (common_sshd_valid | bool) else [])
+         + (['/etc/ssh/sshd_config has no "Include /etc/ssh/sshd_config.d/*.conf" line, a drop-in would be ignored']
+            if not (common_sshd_include_ok | bool) else [])
+         + (['PubkeyAuthentication must stay enabled - it is how you log in']
+            if (ssh_hardening_managed.get('PubkeyAuthentication', 'yes') | string | lower) in ['no', 'false'] else [])
+         + (['Refusing to disable password/keyboard-interactive login: no valid authorized key was verified for user "'
+             ~ common_operator_user ~ '". Add your public key to ~/.ssh/authorized_keys first, log in with it, then retry.']
+            if (((ssh_hardening_managed.get('PasswordAuthentication', '') | string | lower) in ['no', 'false']
+                 or (ssh_hardening_managed.get('KbdInteractiveAuthentication', '') | string | lower) in ['no', 'false'])
+                and not (common_operator_has_key | bool)) else [])
+      }}
+
+- name: SSH | Report safety check results
+  ansible.builtin.debug:
+    msg: "{{ ['SSH safety checks: all passed'] if ssh_hardening_blockers | length == 0 else ['SSH changes are BLOCKED:'] + ssh_hardening_blockers }}"

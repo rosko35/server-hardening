@@ -1,0 +1,68 @@
+---
+- name: Firewall | List listening sockets and their programs
+  ansible.builtin.command: ss -H -tulpn
+  register: firewall_ss
+  changed_when: false
+  check_mode: false
+
+- name: Firewall | Read ufw status
+  ansible.builtin.command: ufw status verbose
+  register: firewall_ufw_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Firewall | Count nftables rules (other firewalls)
+  ansible.builtin.shell: |
+    set -o pipefail
+    if command -v nft >/dev/null 2>&1; then nft list ruleset 2>/dev/null | grep -c . || true; else echo 0; fi
+  args:
+    executable: /bin/bash
+  register: firewall_nft
+  changed_when: false
+  check_mode: false
+
+- name: Firewall | Check whether Docker is installed (Docker bypasses ufw for published ports)
+  ansible.builtin.stat:
+    path: /usr/bin/docker
+    get_checksum: false
+  register: firewall_docker
+
+- name: Firewall | Compute listeners and the proposed rule set (non-strict preview)
+  ansible.builtin.set_fact:
+    firewall_listeners: "{{ firewall_ss.stdout | parse_ss }}"
+    firewall_ufw_installed: "{{ firewall_ufw_status.rc | default(1) == 0 }}"
+    firewall_ufw_active: "{{ 'Status: active' in firewall_ufw_status.stdout | default('') }}"
+    firewall_nft_rule_lines: "{{ firewall_nft.stdout | default('0') | int }}"
+    firewall_plan_preview: >-
+      {{ (firewall_ss.stdout | parse_ss)
+         | firewall_plan(firewall_allowed_ports, common_ssh_port, firewall_acknowledge_closing, strict=false) }}
+    firewall_suggested_ports: "{{ (firewall_ss.stdout | parse_ss) | suggest_allowed_ports(common_ssh_port) }}"
+
+- name: Firewall | Show what is listening publicly
+  ansible.builtin.debug:
+    msg: >-
+      {% for l in firewall_listeners | public_listeners %}{{ l.port }}/{{ l.proto }} {{ l.process }} ({{ l.category }}){{ ', ' if not loop.last else '' }}{% else %}nothing{% endfor %}
+
+- name: Firewall | Show the proposed ufw rule set
+  ansible.builtin.debug:
+    msg:
+      - "ufw installed={{ firewall_ufw_installed }} active={{ firewall_ufw_active }}"
+      - "Allow list (firewall_allowed_ports): {{ firewall_allowed_ports | default([]) }}"
+      - "Suggested starting point from what is listening: {{ firewall_suggested_ports }}"
+      - "Rules that WOULD be added, in order: {% for r in firewall_plan_preview.rules %}{{ r.port }}/{{ r.proto }} {% endfor %}"
+      - "Errors: {{ firewall_plan_preview.errors }}"
+      - "Warnings: {{ firewall_plan_preview.warnings }}"
+
+- name: Firewall | LOUD WARNING - mail or web would be cut off
+  ansible.builtin.debug:
+    msg: "!!!!!!!! {{ item }} !!!!!!!!"
+  loop: "{{ firewall_plan_preview.warnings | select('search', '^!!!') | list }}"
+  when: firewall_allowed_ports | default([]) | length > 0
+
+- name: Firewall | Docker warning
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: Docker is installed. Ports published with 'docker run -p' bypass ufw entirely;
+      this firewall will not protect them.
+  when: firewall_docker.stat.exists

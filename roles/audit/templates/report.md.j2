@@ -1,0 +1,97 @@
+# Security audit - {{ audit_data.host }}
+
+> Generated {{ audit_data.generated }} by server-hardening (audit mode: **nothing on the server was changed**).
+
+| | |
+|---|---|
+| Host | `{{ audit_data.hostname | md_cell }}` ({{ audit_data.os | md_cell }}, kernel {{ audit_data.kernel | md_cell }}) |
+| Connected as | `{{ audit_data.operator.user | md_cell }}` from `{{ audit_data.operator.ip | default('?', true) | md_cell }}` on SSH port {{ audit_data.ssh_port }} |
+| Authorized key verified | {{ 'yes - ' ~ (audit_data.operator.key_files | join(', ')) if audit_data.operator.has_verified_key else '**NO** - do not disable password login yet' }} |
+| sshd -t | {{ 'OK' if audit_data.sshd_valid else '**FAILED**' }} |
+
+## Summary
+
+| Critical | High | Medium | Low | Info | Total |
+|---:|---:|---:|---:|---:|---:|
+| {{ audit_summary.critical }} | {{ audit_summary.high }} | {{ audit_summary.medium }} | {{ audit_summary.low }} | {{ audit_summary.info }} | {{ audit_summary.total }} |
+
+## Findings
+
+| Severity | What | Why it matters | How this project fixes it | Toggle | Change risk |
+|---|---|---|---|---|---|
+{% for f in audit_findings %}
+| **{{ f.severity | upper }}** | {{ f.title | md_cell }}{% if f.detail %}<br>`{{ f.detail | md_cell }}`{% endif %} | {{ f.why | md_cell }} | {{ f.fix | md_cell }} | `{{ f.toggle | md_cell }}` | {{ f.risk | md_cell }} |
+{% else %}
+| - | No findings | | | | |
+{% endfor %}
+
+## Listening services
+
+| Port | Proto | Program | Reachable from | Category |
+|---:|---|---|---|---|
+{% for l in audit_data.listeners %}
+| {{ l.port }} | {{ l.proto }} | {{ l.process | md_cell }} | {{ 'internet (' ~ (l.addresses | join(', ')) ~ ')' if l.public else 'this machine only' }} | {{ l.category }} |
+{% else %}
+| - | | (could not read listeners) | | |
+{% endfor %}
+
+## Firewall plan
+
+ufw installed: **{{ audit_data.ufw.installed }}**, active: **{{ audit_data.ufw.active }}**.
+
+{% if audit_data.firewall_plan %}
+Rules that `firewall_apply=true` would add, in this order:
+
+| # | Port | Proto | Note |
+|---:|---|---|---|
+{% for r in audit_data.firewall_plan.rules %}
+| {{ loop.index }} | {{ r.port }} | {{ r.proto }} | {{ r.comment | md_cell }} |
+{% endfor %}
+
+{% if audit_data.firewall_plan.would_close %}
+**WARNING - these publicly listening services would be blocked:**
+
+{% for w in audit_data.firewall_plan.would_close %}
+- `{{ w.spec }}` ({{ w.process | md_cell }}{{ ', ' ~ w.service_hint if w.service_hint else '' }}) - {{ 'acknowledged in firewall_acknowledge_closing' if w.acknowledged else '**NOT acknowledged: the firewall role will refuse to run**' }}
+{% endfor %}
+{% endif %}
+{% for e in audit_data.firewall_plan.errors %}
+- Error: {{ e }}
+{% endfor %}
+{% else %}
+`firewall_allowed_ports` is empty, so no firewall would be enabled (that is the safe default).
+A starting point based on what is listening publicly right now:
+
+```yaml
+firewall_allowed_ports: {{ audit_data.firewall_suggested_ports | to_json }}
+```
+
+Remove anything that should NOT be reachable from the internet before using it.
+{% endif %}
+
+## Updates
+
+- Pending updates: {{ audit_data.updates.total }} (security: {{ audit_data.updates.security }}) - based on the last `apt update`.
+- Reboot required: {{ 'yes' if audit_data.reboot_required else 'no' }}
+- unattended-upgrades installed: {{ audit_data.unattended.installed }}, enabled: {{ audit_data.unattended.enabled }}
+
+## Accounts
+
+- Accounts that can log in: {% for u in audit_data.login_users %}`{{ u.name }}` ({{ u.shell }}){{ ', ' if not loop.last else '' }}{% else %}none found{% endfor %}
+
+- Admin group lines: {% for g in audit_data.sudo_groups %}`{{ g | md_cell }}` {% else %}none{% endfor %}
+
+- NOPASSWD sudo rules: {% for r in audit_data.nopasswd_sudo %}`{{ r | md_cell }}` {% else %}none{% endfor %}
+
+
+## Toggles used for this run
+
+| Toggle | Value |
+|---|---|
+{% for k, v in audit_data.toggles | dictsort %}
+| `{{ k }}` | {{ v }} |
+{% endfor %}
+
+---
+Next steps: read the findings above, run `make lynis-before`, then apply **one** category at a time
+with a dry run first (`make apply-<category> CHECK=1`). See docs/GUIDE.md.

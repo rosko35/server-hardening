@@ -1,0 +1,115 @@
+---
+- name: Lynis | Check the label
+  ansible.builtin.assert:
+    that:
+      - lynis_label in ['before', 'after']
+    fail_msg: "lynis_label must be 'before' or 'after' (got '{{ lynis_label }}')."
+    quiet: true
+
+- name: Lynis | Find an installed Lynis
+  ansible.builtin.shell: |
+    if [ -x /opt/server-hardening/lynis/lynis ]; then echo /opt/server-hardening/lynis/lynis;
+    elif command -v lynis; then :; else exit 1; fi
+  register: lynis_found
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Lynis | Stop if Lynis is missing and installing was not allowed
+  ansible.builtin.fail:
+    msg: "Lynis is not installed. Install it with: make lynis-before   (sets lynis_apply=true)"
+  when:
+    - lynis_found.rc != 0
+    - not (lynis_apply | bool)
+
+- name: Lynis | Install
+  ansible.builtin.include_tasks:
+    file: install.yml
+    apply:
+      tags: [always]
+  when:
+    - lynis_found.rc != 0
+    - lynis_apply | bool
+
+- name: Lynis | Locate the Lynis binary
+  ansible.builtin.shell: |
+    if [ -x /opt/server-hardening/lynis/lynis ]; then echo /opt/server-hardening/lynis/lynis; else command -v lynis; fi
+  register: lynis_bin
+  changed_when: false
+  check_mode: false
+
+- name: Lynis | Output directory on the server
+  ansible.builtin.file:
+    path: /var/log/server-hardening
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Lynis | Run the audit (read-only scan, takes 1-3 minutes)
+  ansible.builtin.command:
+    argv:
+      - "{{ lynis_bin.stdout }}"
+      - audit
+      - system
+      - --quick
+      - --no-colors
+      - --report-file
+      - "/var/log/server-hardening/lynis-{{ lynis_label }}.dat"
+      - --log-file
+      - "/var/log/server-hardening/lynis-{{ lynis_label }}.log"
+    chdir: "{{ lynis_bin.stdout | dirname }}"
+  changed_when: false # a scan does not change the system
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Lynis | Fetch the report to the control machine
+  ansible.builtin.fetch:
+    src: "/var/log/server-hardening/lynis-{{ lynis_label }}.dat"
+    dest: "{{ harden_report_dir }}/{{ inventory_hostname }}/lynis-{{ lynis_label }}.dat"
+    flat: true
+  when: not ansible_check_mode
+
+- name: Lynis | Summarise the report (scripts/lynis_report.py)
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ playbook_dir }}/scripts/lynis_report.py"
+      - "{{ harden_report_dir }}/{{ inventory_hostname }}/lynis-{{ lynis_label }}.dat"
+      - -o
+      - "{{ harden_report_dir }}/{{ inventory_hostname }}/lynis-{{ lynis_label }}.md"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Lynis | Read the hardening index
+  ansible.builtin.set_fact:
+    lynis_hardening_index: >-
+      {{ lookup('ansible.builtin.file', harden_report_dir ~ '/' ~ inventory_hostname ~ '/lynis-' ~ lynis_label ~ '.dat')
+         | regex_search('hardening_index=(\d+)', '\1') | default(['n/a'], true) | first }}
+  when: not ansible_check_mode
+
+- name: Lynis | Compare with the "before" run
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ playbook_dir }}/scripts/compare_lynis.py"
+      - "{{ harden_report_dir }}/{{ inventory_hostname }}/lynis-before.dat"
+      - "{{ harden_report_dir }}/{{ inventory_hostname }}/lynis-after.dat"
+      - -o
+      - "{{ harden_report_dir }}/{{ inventory_hostname }}/lynis-comparison.md"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - lynis_label == 'after'
+    - (harden_report_dir ~ '/' ~ inventory_hostname ~ '/lynis-before.dat') is file
+
+- name: Lynis | Result
+  ansible.builtin.debug:
+    msg:
+      - "Lynis hardening index ({{ lynis_label }}): {{ lynis_hardening_index | default('n/a') }} / 100"
+      - "Report: {{ harden_report_dir }}/{{ inventory_hostname }}/lynis-{{ lynis_label }}.md"
+      - "{{ 'Comparison: ' ~ harden_report_dir ~ '/' ~ inventory_hostname ~ '/lynis-comparison.md' if lynis_label == 'after' else 'Next: apply categories one at a time, then make lynis-after' }}"

@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: file_permissions
+  author: Emre Özaydın
+  description: Tighten permissions on sensitive files (only ever removes bits)
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+dependencies: []

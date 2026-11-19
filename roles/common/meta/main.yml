@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: common
+  author: Emre Özaydın
+  description: Shared preflight checks (OS, operator, SSH state) and the backup helper
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+dependencies: []

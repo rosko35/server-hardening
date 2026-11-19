@@ -1,0 +1,42 @@
+---
+- name: Auto-updates | Preflight (read-only, always runs)
+  tags: [audit]
+  block:
+    - name: Auto-updates | Is unattended-upgrades installed?
+      ansible.builtin.command: dpkg-query -W -f=${Status} unattended-upgrades
+      register: auto_updates_pkg
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Auto-updates | Is the periodic unattended upgrade enabled?
+      ansible.builtin.command: apt-config dump APT::Periodic::Unattended-Upgrade
+      register: auto_updates_periodic
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Auto-updates | Set facts
+      ansible.builtin.set_fact:
+        auto_updates_installed: "{{ 'install ok installed' in auto_updates_pkg.stdout | default('') }}"
+        auto_updates_enabled: "{{ auto_updates_periodic.stdout | default('') is search('Unattended-Upgrade \"1\"') }}"
+
+    - name: Auto-updates | Current state
+      ansible.builtin.debug:
+        msg: "unattended-upgrades installed={{ auto_updates_installed }} enabled={{ auto_updates_enabled }}"
+
+- name: Auto-updates | Apply (only with auto_updates_apply=true)
+  ansible.builtin.include_tasks:
+    file: apply.yml
+    apply:
+      tags: [always]
+  when: auto_updates_apply | bool
+
+- name: Auto-updates | Audit-only notice
+  ansible.builtin.debug:
+    msg: >-
+      AUDIT ONLY - nothing changed. Would install unattended-upgrades and write
+      /etc/apt/apt.conf.d/21server-hardening-periodic and 52server-hardening-unattended
+      (security updates only, automatic reboot OFF).
+  when: not (auto_updates_apply | bool)
+  tags: [audit]

@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: lynis
+  author: Emre Özaydın
+  description: Install and run Lynis, fetch the report and hardening index
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+dependencies: []

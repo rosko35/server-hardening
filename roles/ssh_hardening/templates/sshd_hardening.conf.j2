@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+#
+# server-hardening: SSH settings.
+# sshd uses the FIRST value it reads for each keyword, and the Include of
+# /etc/ssh/sshd_config.d/*.conf sits at the top of sshd_config, so the
+# settings below win over the main file and later drop-ins (e.g. 50-cloud-init.conf).
+#
+# The SSH port is deliberately NOT managed here.
+#
+# Undo:  sudo rm {{ ssh_hardening_dropin }} && sudo sshd -t && sudo systemctl reload ssh
+{% for key, value in ssh_hardening_managed | dictsort %}
+{%   if value is sameas true %}
+{{ key }} yes
+{%   elif value is sameas false %}
+{{ key }} no
+{%   else %}
+{{ key }} {{ value }}
+{%   endif %}
+{% endfor %}

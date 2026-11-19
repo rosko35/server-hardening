@@ -1,0 +1,67 @@
+---
+- name: Fail2ban | Refuse to run without knowing your IP (you could ban yourself)
+  ansible.builtin.assert:
+    that:
+      - common_operator_ip | length > 0
+    fail_msg: >-
+      Nothing was changed. Your connection IP could not be detected (no $SSH_CLIENT, e.g. inside tmux/screen
+      or 'sudo ansible-playbook'). Find it with: echo $SSH_CLIENT   (first field) and re-run with
+      -e harden_operator_ip=YOUR.IP.HERE
+
+- name: Fail2ban | Install fail2ban (and the systemd journal backend)
+  ansible.builtin.apt:
+    name:
+      - fail2ban
+      - python3-systemd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Fail2ban | Back up the jail file
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: backup
+    apply:
+      tags: [always]
+  vars:
+    common_backup_target: /etc/fail2ban/jail.d/server-hardening.local # noqa: var-naming[no-role-prefix]
+
+- name: Fail2ban | Write the sshd jail
+  ansible.builtin.template:
+    src: server-hardening.local.j2
+    dest: /etc/fail2ban/jail.d/server-hardening.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+  when: not (ansible_check_mode and not (fail2ban_installed | bool))
+
+- name: Fail2ban | Test the complete fail2ban configuration
+  ansible.builtin.command: fail2ban-client --test
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Fail2ban | Enable and start fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and not (fail2ban_installed | bool))
+
+- name: Fail2ban | Apply the new jail now
+  ansible.builtin.meta: flush_handlers
+
+- name: Fail2ban | Show sshd jail status
+  ansible.builtin.command: fail2ban-client status sshd
+  register: fail2ban_status
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Fail2ban | Done
+  ansible.builtin.debug:
+    msg:
+      - "{{ fail2ban_status.stdout_lines | default(['(check mode)']) }}"
+      - "Never banned: {{ fail2ban_ignoreip | join(' ') }}"
+      - "Unban someone: sudo fail2ban-client set sshd unbanip 1.2.3.4"
+      - "Undo: make rollback CONFIRM=1 CATEGORIES=fail2ban"

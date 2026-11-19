@@ -1,0 +1,6 @@
+// {{ ansible_managed }}
+// server-hardening: run apt update + unattended-upgrade once a day.
+// Undo: sudo rm /etc/apt/apt.conf.d/21server-hardening-periodic
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";

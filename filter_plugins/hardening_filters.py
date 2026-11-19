@@ -306,6 +306,42 @@ def authorized_keys_paths(authorizedkeysfile: str, user: str, home: str) -> list
     return paths
 
 
+_TIME_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+_TIME_KEYS = {"logingracetime", "clientaliveinterval"}
+_BOOL_WORDS = {True: "yes", False: "no"}
+
+
+def _sshd_seconds(value: str) -> str:
+    """sshd -T prints time values in seconds; accept '30', '30s', '1m', '1h30m'."""
+    total, number = 0, ""
+    for ch in str(value).strip().lower():
+        if ch.isdigit():
+            number += ch
+        elif ch in _TIME_UNITS and number:
+            total += int(number) * _TIME_UNITS[ch]
+            number = ""
+        else:
+            return str(value)
+    if number:
+        total += int(number)
+    return str(total)
+
+
+def sshd_mismatches(effective: dict, desired: dict) -> list[str]:
+    """Settings from ``desired`` that ``sshd -T`` does not report as in effect."""
+    problems = []
+    for key, want in (desired or {}).items():
+        want_s = _BOOL_WORDS.get(want, str(want)) if isinstance(want, bool) else str(want)
+        got = sshd_value(effective, key, "<unset>")
+        if key.lower() in _TIME_KEYS:
+            want_cmp, got_cmp = _sshd_seconds(want_s), _sshd_seconds(got)
+        else:
+            want_cmp, got_cmp = want_s.lower(), got.lower()
+        if want_cmp != got_cmp:
+            problems.append(f"{key}: wanted {want_s}, effective {got}")
+    return problems
+
+
 # --------------------------------------------------------------------------- #
 # Accounts
 # --------------------------------------------------------------------------- #
@@ -365,6 +401,115 @@ def tightened_mode(current, desired) -> str:
     return "0%03o" % (_mode_int(current) & _mode_int(desired) & 0o7777)
 
 
+def file_mode_plan(stat_output: str, targets) -> list[dict]:
+    """Combine ``stat -c '%n|%a'`` output with the wanted modes.
+
+    Returns one dict per target: path, exists, mode, desired, new_mode, change.
+    ``new_mode`` only ever removes bits (see ``tightened_mode``).
+    """
+    current = {}
+    for line in (stat_output or "").splitlines():
+        path, sep, mode = line.strip().rpartition("|")
+        if sep and mode.isdigit():
+            current[path] = mode.zfill(4)
+    plan = []
+    for t in targets or []:
+        path, desired = t["path"], str(t["mode"]).zfill(4)
+        mode = current.get(path)
+        item = {"path": path, "exists": mode is not None, "mode": mode or "", "desired": desired}
+        if mode is not None:
+            item["new_mode"] = tightened_mode(mode, desired)
+            item["change"] = mode_needs_tightening(mode, desired)
+        else:
+            item["new_mode"], item["change"] = "", False
+        plan.append(item)
+    return plan
+
+
+def state_file_name(path: str) -> str:
+    """Flat, reversible-enough file name for per-path state files."""
+    return path.strip("/").replace("/", "__") or "root"
+
+
+# --------------------------------------------------------------------------- #
+# sysctl / login.defs parsing
+# --------------------------------------------------------------------------- #
+def parse_sysctl(output: str) -> dict:
+    """``sysctl a.b c.d`` output (``key = value``) -> dict of strings."""
+    result = {}
+    for line in (output or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            result[key.strip()] = " ".join(value.split())
+    return result
+
+
+def parse_login_defs(text: str) -> dict:
+    """Active (uncommented) ``KEY value`` pairs from /etc/login.defs."""
+    result = {}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            result[parts[0]] = parts[1].strip()
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# Backups / rollback
+# --------------------------------------------------------------------------- #
+_BACKUP_CATEGORIES = (
+    ("/etc/ssh/", "ssh"),
+    ("/etc/ufw/", "firewall"),
+    ("/etc/default/ufw", "firewall"),
+    ("/etc/apt/apt.conf.d/", "auto_updates"),
+    ("/etc/fail2ban/", "fail2ban"),
+    ("/etc/sysctl.d/", "sysctl"),
+    ("/etc/login.defs", "accounts"),
+)
+
+
+def backup_category(path: str) -> str:
+    """Which hardening category a backed-up path belongs to (for partial rollback)."""
+    target = path[: -len(".absent")] if path.endswith(".absent") else path
+    for prefix, category in _BACKUP_CATEGORIES:
+        if target == prefix or target.startswith(prefix):
+            return category
+    return "other"
+
+
+def rollback_actions(backup_files, originals_root: str, categories=None) -> list[dict]:
+    """Turn the list of files under ``originals/`` into restore/delete actions."""
+    wanted = set(categories or ["all"])
+    root = originals_root.rstrip("/")
+    actions = []
+    for f in sorted(backup_files or []):
+        if not f.startswith(root + "/"):
+            continue
+        rel = f[len(root) :]
+        absent = rel.endswith(".absent")
+        target = rel[: -len(".absent")] if absent else rel
+        category = backup_category(target)
+        if "all" not in wanted and category not in wanted:
+            continue
+        actions.append(
+            {"backup": f, "target": target, "action": "delete" if absent else "restore", "category": category}
+        )
+    return actions
+
+
+def suggest_allowed_ports(listeners, ssh_port) -> list[str]:
+    """A starting point for firewall_allowed_ports: SSH + everything listening publicly."""
+    specs = [f"{int(ssh_port)}/tcp"] if str(ssh_port).isdigit() else []
+    for item in public_listeners(listeners):
+        spec = f"{item['port']}/{item['proto']}"
+        if spec not in specs:
+            specs.append(spec)
+    return specs
+
+
 # --------------------------------------------------------------------------- #
 # Reporting helpers
 # --------------------------------------------------------------------------- #
@@ -372,6 +517,13 @@ def md_cell(value) -> str:
     """Make a value safe for a Markdown table cell."""
     text = str(value if value is not None else "")
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("\r", "").replace("\n", "<br>")
+
+
+def _truthy(value) -> bool:
+    """Booleans may arrive as strings from Ansible templating ("True", "false", "yes")."""
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "1", "on"}
+    return bool(value)
 
 
 def _f(fid, severity, title, detail, why, fix, toggle, risk="low"):
@@ -399,7 +551,7 @@ def build_findings(audit: dict) -> list[dict]:
     operator = a.get("operator") or {}
 
     # ---- SSH -----------------------------------------------------------------
-    if a.get("sshd_valid") is False:
+    if "sshd_valid" in a and not _truthy(a.get("sshd_valid")):
         findings.append(
             _f(
                 "ssh-config-invalid",
@@ -441,7 +593,7 @@ def build_findings(audit: dict) -> list[dict]:
                 )
             )
         if sshd_value(sshd, "passwordauthentication") == "yes":
-            has_key = operator.get("has_verified_key")
+            has_key = _truthy(operator.get("has_verified_key"))
             findings.append(
                 _f(
                     "ssh-password-auth",
@@ -540,7 +692,7 @@ def build_findings(audit: dict) -> list[dict]:
 
     # ---- Firewall ------------------------------------------------------------
     ufw = a.get("ufw") or {}
-    if not ufw.get("active") and int(a.get("nft_rule_lines", 0) or 0) < 5:
+    if not _truthy(ufw.get("active")) and int(a.get("nft_rule_lines", 0) or 0) < 5:
         findings.append(
             _f(
                 "fw-none",
@@ -597,7 +749,7 @@ def build_findings(audit: dict) -> list[dict]:
                 "low",
             )
         )
-    if a.get("reboot_required"):
+    if _truthy(a.get("reboot_required")):
         findings.append(
             _f(
                 "upd-reboot",
@@ -611,7 +763,7 @@ def build_findings(audit: dict) -> list[dict]:
             )
         )
     uu = a.get("unattended") or {}
-    if not uu.get("installed") or not uu.get("enabled"):
+    if not _truthy(uu.get("installed")) or not _truthy(uu.get("enabled")):
         findings.append(
             _f(
                 "upd-unattended",
@@ -627,7 +779,7 @@ def build_findings(audit: dict) -> list[dict]:
 
     # ---- fail2ban ------------------------------------------------------------
     f2b = a.get("fail2ban") or {}
-    if not f2b.get("installed") or not f2b.get("active"):
+    if not _truthy(f2b.get("installed")) or not _truthy(f2b.get("active")):
         findings.append(
             _f(
                 "f2b-missing",
@@ -729,7 +881,11 @@ def build_findings(audit: dict) -> list[dict]:
                 "n/a",
             )
         )
-    loose = [m for m in a.get("file_modes", []) if m.get("exists") and mode_needs_tightening(m["mode"], m["desired"])]
+    loose = [
+        m
+        for m in a.get("file_modes", [])
+        if _truthy(m.get("exists")) and mode_needs_tightening(m["mode"], m["desired"])
+    ]
     if loose:
         findings.append(
             _f(
@@ -779,7 +935,7 @@ def build_findings(audit: dict) -> list[dict]:
         )
 
     # ---- Lynis ---------------------------------------------------------------
-    if not a.get("lynis_installed"):
+    if not _truthy(a.get("lynis_installed")):
         findings.append(
             _f(
                 "lynis-missing",
@@ -816,6 +972,14 @@ class FilterModule:
             "normalize_port_spec": normalize_port_spec,
             "sshd_effective": sshd_effective,
             "sshd_value": sshd_value,
+            "sshd_mismatches": sshd_mismatches,
+            "file_mode_plan": file_mode_plan,
+            "state_file_name": state_file_name,
+            "parse_sysctl": parse_sysctl,
+            "parse_login_defs": parse_login_defs,
+            "backup_category": backup_category,
+            "rollback_actions": rollback_actions,
+            "suggest_allowed_ports": suggest_allowed_ports,
             "authorized_keys_paths": authorized_keys_paths,
             "parse_passwd": parse_passwd,
             "system_accounts_with_shell": system_accounts_with_shell,

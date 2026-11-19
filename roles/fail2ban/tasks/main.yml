@@ -1,0 +1,47 @@
+---
+- name: Fail2ban | Preflight (read-only, always runs)
+  tags: [audit]
+  block:
+    - name: Fail2ban | Is fail2ban installed?
+      ansible.builtin.command: dpkg-query -W -f=${Status} fail2ban
+      register: fail2ban_pkg
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Fail2ban | Is fail2ban running?
+      ansible.builtin.command: systemctl is-active fail2ban # noqa: command-instead-of-module
+      register: fail2ban_service
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Fail2ban | Set facts
+      ansible.builtin.set_fact:
+        fail2ban_installed: "{{ 'install ok installed' in fail2ban_pkg.stdout | default('') }}"
+        fail2ban_active: "{{ (fail2ban_service.stdout | default('')) == 'active' }}"
+        fail2ban_ignoreip: >-
+          {{ (['127.0.0.1/8', '::1']
+              + ([common_operator_ip] if common_operator_ip | length > 0 else [])
+              + fail2ban_ignoreip_extra) | unique }}
+
+    - name: Fail2ban | Current state
+      ansible.builtin.debug:
+        msg:
+          - "fail2ban installed={{ fail2ban_installed }} active={{ fail2ban_active }}"
+          - "Would never ban (ignoreip): {{ fail2ban_ignoreip | join(' ') }}"
+
+- name: Fail2ban | Apply (only with fail2ban_apply=true)
+  ansible.builtin.include_tasks:
+    file: apply.yml
+    apply:
+      tags: [always]
+  when: fail2ban_apply | bool
+
+- name: Fail2ban | Audit-only notice
+  ansible.builtin.debug:
+    msg: >-
+      AUDIT ONLY - nothing changed. Would install fail2ban and write
+      /etc/fail2ban/jail.d/server-hardening.local (sshd jail on port {{ common_ssh_port }}).
+  when: not (fail2ban_apply | bool)
+  tags: [audit]

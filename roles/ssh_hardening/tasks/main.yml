@@ -1,0 +1,23 @@
+---
+- name: SSH | Preflight (read-only, always runs)
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [audit]
+
+# Dynamic include: the condition is checked once, and handlers/meta tasks
+# inside apply.yml run unconditionally once we are in. apply.tags=always makes
+# the included tasks follow the tag of this include (the role tag).
+- name: SSH | Apply (only with ssh_hardening_apply=true)
+  ansible.builtin.include_tasks:
+    file: apply.yml
+    apply:
+      tags: [always]
+  when: ssh_hardening_apply | bool
+
+- name: SSH | Audit-only notice
+  ansible.builtin.debug:
+    msg:
+      - "AUDIT ONLY - nothing changed. This drop-in would be written to {{ ssh_hardening_dropin }}:"
+      - "{{ lookup('ansible.builtin.template', 'sshd_hardening.conf.j2') }}"
+      - "Preview exactly: make apply-ssh CHECK=1   Apply: make apply-ssh"
+  when: not (ssh_hardening_apply | bool)
+  tags: [audit]

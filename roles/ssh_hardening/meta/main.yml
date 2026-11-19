@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: ssh_hardening
+  author: Emre Özaydın
+  description: Lock-out-safe sshd hardening via a validated drop-in
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+dependencies: []

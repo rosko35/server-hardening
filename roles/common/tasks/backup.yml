@@ -1,0 +1,58 @@
+---
+# Keep the ORIGINAL (pre-server-hardening) copy of one file, exactly once.
+#   input: common_backup_target  (absolute path of the file about to change)
+# Result under {{ harden_backup_root }}/originals/<same path>:
+#   - <path>          copy of the file as it was before this project touched it
+#   - <path>.absent   marker: the file did not exist; rollback deletes it
+# Idempotent: once a backup or marker exists it is never overwritten, so the
+# backup always holds the true original even after many runs.
+- name: Backup | Inspect target file
+  ansible.builtin.stat:
+    path: "{{ common_backup_target }}"
+    get_checksum: false
+  register: common_backup_src
+
+- name: Backup | Inspect existing backup
+  ansible.builtin.stat:
+    path: "{{ harden_backup_root }}/originals{{ common_backup_target }}"
+    get_checksum: false
+  register: common_backup_orig
+
+- name: Backup | Inspect existing "did not exist" marker
+  ansible.builtin.stat:
+    path: "{{ harden_backup_root }}/originals{{ common_backup_target }}.absent"
+    get_checksum: false
+  register: common_backup_marker
+
+- name: Backup | Create backup directory
+  ansible.builtin.file:
+    path: "{{ (harden_backup_root ~ '/originals' ~ common_backup_target) | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Backup | Keep original copy of the file
+  ansible.builtin.copy:
+    src: "{{ common_backup_target }}"
+    dest: "{{ harden_backup_root }}/originals{{ common_backup_target }}"
+    remote_src: true
+    force: false
+    mode: preserve
+  when:
+    - common_backup_src.stat.exists
+    - not common_backup_orig.stat.exists
+    - not common_backup_marker.stat.exists
+
+- name: Backup | Record that the file did not exist before
+  ansible.builtin.copy:
+    content: "{{ common_backup_target }} was created by server-hardening; rollback deletes it.\n"
+    dest: "{{ harden_backup_root }}/originals{{ common_backup_target }}.absent"
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - not common_backup_src.stat.exists
+    - not common_backup_orig.stat.exists
+    - not common_backup_marker.stat.exists

@@ -1,0 +1,51 @@
+---
+- name: Sysctl | Preflight (read-only, always runs)
+  tags: [audit]
+  block:
+    - name: Sysctl | Read current values
+      ansible.builtin.command:
+        argv: "{{ ['sysctl', '-e'] + (sysctl_network_settings.keys() | list) + sysctl_network_extra_keys }}"
+      vars:
+        sysctl_network_extra_keys: [net.ipv4.ip_forward, net.ipv4.conf.all.rp_filter, net.ipv4.conf.default.rp_filter]
+      register: sysctl_network_read
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Sysctl | Work out what would change
+      ansible.builtin.set_fact:
+        sysctl_network_current: "{{ sysctl_network_read.stdout | parse_sysctl }}"
+        # Only keys that exist on this kernel (e.g. IPv6 may be disabled).
+        sysctl_network_desired: >-
+          {{ (sysctl_network_settings
+              | combine(sysctl_network_rp if sysctl_network_strict_rp_filter | bool else {}))
+             | dict2items
+             | selectattr('key', 'in', (sysctl_network_read.stdout | parse_sysctl).keys() | list)
+             | items2dict }}
+      vars:
+        sysctl_network_rp: { net.ipv4.conf.all.rp_filter: 1, net.ipv4.conf.default.rp_filter: 1 }
+
+    - name: Sysctl | Show differences
+      ansible.builtin.debug:
+        msg: >-
+          {% for k, v in sysctl_network_desired | dictsort %}{% if (sysctl_network_current[k] | default('?') | string) != (v | string) %}{{ k }}: {{ sysctl_network_current[k] | default('?') }} -> {{ v }}; {% endif %}{% else %}nothing{% endfor %}
+
+    - name: Sysctl | Note about routing
+      ansible.builtin.debug:
+        msg: >-
+          net.ipv4.ip_forward=1 (Docker/VPN/router). That is fine: this role never touches ip_forward
+          and the redirect settings do not affect forwarding.
+      when: (sysctl_network_current['net.ipv4.ip_forward'] | default('0')) == '1'
+
+- name: Sysctl | Apply (only with sysctl_network_apply=true)
+  ansible.builtin.include_tasks:
+    file: apply.yml
+    apply:
+      tags: [always]
+  when: sysctl_network_apply | bool
+
+- name: Sysctl | Audit-only notice
+  ansible.builtin.debug:
+    msg: "AUDIT ONLY - nothing changed. Would write /etc/sysctl.d/60-server-hardening.conf and load it with sysctl -p."
+  when: not (sysctl_network_apply | bool)
+  tags: [audit]

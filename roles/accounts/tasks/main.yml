@@ -1,0 +1,46 @@
+---
+- name: Accounts | Preflight (read-only, always runs)
+  tags: [audit]
+  block:
+    - name: Accounts | Read /etc/login.defs
+      ansible.builtin.slurp:
+        src: /etc/login.defs
+      register: accounts_login_defs_raw
+
+    - name: Accounts | Read the account list
+      ansible.builtin.command: getent passwd
+      register: accounts_passwd
+      changed_when: false
+      check_mode: false
+
+    - name: Accounts | Work out what would change
+      ansible.builtin.set_fact:
+        accounts_login_defs_current: "{{ accounts_login_defs_raw.content | b64decode | parse_login_defs }}"
+        accounts_login_defs_wanted: "{{ accounts_login_defs | dict2items | rejectattr('value', 'equalto', '') | items2dict }}"
+        accounts_entries: "{{ accounts_passwd.stdout | parse_passwd }}"
+        accounts_system_shells: >-
+          {{ accounts_passwd.stdout | parse_passwd
+             | system_accounts_with_shell(
+                 (accounts_login_defs_raw.content | b64decode | parse_login_defs).get('SYS_UID_MAX', 999),
+                 accounts_shell_lock_exclude + [common_operator_user]) }}
+
+    - name: Accounts | Show findings
+      ansible.builtin.debug:
+        msg:
+          - "login.defs changes: {% for k, v in accounts_login_defs_wanted | dictsort %}{% if accounts_login_defs_current.get(k, '') != v | string %}{{ k }} {{ accounts_login_defs_current.get(k, 'unset') }} -> {{ v }}; {% endif %}{% endfor %}"
+          - "System accounts with a login shell: {{ accounts_system_shells | map(attribute='name') | list }}"
+
+- name: Accounts | Apply (only with accounts_apply=true)
+  ansible.builtin.include_tasks:
+    file: apply.yml
+    apply:
+      tags: [always]
+  when: accounts_apply | bool
+
+- name: Accounts | Audit-only notice
+  ansible.builtin.debug:
+    msg: >-
+      AUDIT ONLY - nothing changed. accounts_apply=true updates /etc/login.defs;
+      accounts_lock_system_shells=true additionally sets those system accounts' shell to /usr/sbin/nologin.
+  when: not (accounts_apply | bool)
+  tags: [audit]

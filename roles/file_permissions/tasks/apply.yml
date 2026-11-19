@@ -1,0 +1,37 @@
+---
+- name: Permissions | State directory for previous modes
+  ansible.builtin.file:
+    path: "{{ harden_backup_root }}/state/perms"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Permissions | Remember each previous mode (once, for rollback)
+  ansible.builtin.copy:
+    content: "{{ file_permissions_item.path }}|{{ file_permissions_item.mode }}\n"
+    dest: "{{ harden_backup_root }}/state/perms/{{ file_permissions_item.path | state_file_name }}"
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ file_permissions_plan | selectattr('change') | list }}"
+  loop_control:
+    loop_var: file_permissions_item
+    label: "{{ file_permissions_item.path }}"
+
+- name: Permissions | Remove extra permission bits
+  ansible.builtin.file:
+    path: "{{ file_permissions_item.path }}"
+    mode: "{{ file_permissions_item.new_mode }}"
+    follow: false
+  loop: "{{ file_permissions_plan | selectattr('change') | list }}"
+  loop_control:
+    loop_var: file_permissions_item
+    label: "{{ file_permissions_item.path }} {{ file_permissions_item.mode }} -> {{ file_permissions_item.new_mode }}"
+
+- name: Permissions | Done
+  ansible.builtin.debug:
+    msg:
+      - "Tightened {{ file_permissions_plan | selectattr('change') | list | length }} path(s)."
+      - "Undo: make rollback CONFIRM=1 CATEGORIES=file_permissions"

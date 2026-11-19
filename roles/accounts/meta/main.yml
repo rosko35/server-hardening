@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: accounts
+  author: Emre Özaydın
+  description: login.defs policy and opt-in locking of system account shells
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+dependencies: []
