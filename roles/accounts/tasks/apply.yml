@@ -41,6 +41,7 @@
       loop_control:
         loop_var: accounts_sys
         label: "{{ accounts_sys.name }}"
+      when: not ansible_check_mode
 
     - name: Accounts | Set shell to /usr/sbin/nologin
       ansible.builtin.user:

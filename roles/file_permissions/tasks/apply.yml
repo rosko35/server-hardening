@@ -19,6 +19,7 @@
   loop_control:
     loop_var: file_permissions_item
     label: "{{ file_permissions_item.path }}"
+  when: not ansible_check_mode
 
 - name: Permissions | Remove extra permission bits
   ansible.builtin.file:

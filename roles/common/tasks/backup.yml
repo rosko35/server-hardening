@@ -24,6 +24,17 @@
     get_checksum: false
   register: common_backup_marker
 
+- name: Backup | Create the backup root (readable by root only)
+  ansible.builtin.file:
+    path: "{{ harden_backup_root }}/{{ common_backup_sub }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop: [originals, state]
+  loop_control:
+    loop_var: common_backup_sub
+
 - name: Backup | Create backup directory
   ansible.builtin.file:
     path: "{{ (harden_backup_root ~ '/originals' ~ common_backup_target) | dirname }}"
@@ -40,6 +51,7 @@
     force: false
     mode: preserve
   when:
+    - not ansible_check_mode
     - common_backup_src.stat.exists
     - not common_backup_orig.stat.exists
     - not common_backup_marker.stat.exists
@@ -53,6 +65,7 @@
     group: root
     mode: "0600"
   when:
+    - not ansible_check_mode
     - not common_backup_src.stat.exists
     - not common_backup_orig.stat.exists
     - not common_backup_marker.stat.exists

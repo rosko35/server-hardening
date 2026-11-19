@@ -30,6 +30,14 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: Firewall | State directory
+  ansible.builtin.file:
+    path: "{{ harden_backup_root }}/state"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: Firewall | Remember whether ufw was active before (once)
   ansible.builtin.copy:
     content: "{{ 'active' if firewall_ufw_active | bool else 'inactive' }}\n"
@@ -38,6 +46,7 @@
     owner: root
     group: root
     mode: "0600"
+  when: not ansible_check_mode
 
 - name: Firewall | Back up ufw configuration files
   ansible.builtin.include_role:

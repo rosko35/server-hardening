@@ -6,6 +6,14 @@
     fail_msg: "ip_forward / forwarding keys are not allowed here - they can break Docker, VPNs and routing."
     quiet: true
 
+- name: Sysctl | State directory
+  ansible.builtin.file:
+    path: "{{ harden_backup_root }}/state"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: Sysctl | Remember the current runtime values (once, for rollback)
   ansible.builtin.copy:
     content: |
@@ -20,6 +28,7 @@
     owner: root
     group: root
     mode: "0600"
+  when: not ansible_check_mode
 
 - name: Sysctl | Back up the drop-in
   ansible.builtin.include_role:
