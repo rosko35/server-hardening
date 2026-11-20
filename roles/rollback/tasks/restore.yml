@@ -63,12 +63,38 @@
     - not ansible_check_mode
 
 # ---- fail2ban ----------------------------------------------------------------
-- name: Rollback | fail2ban - restart with the restored configuration
+- name: Rollback | fail2ban - previous state
+  ansible.builtin.slurp:
+    src: "{{ harden_backup_root }}/state/fail2ban-previous-state"
+  register: rollback_f2b_state
+  failed_when: false
+  when: "'all' in rollback_wanted or 'fail2ban' in rollback_wanted"
+
+- name: Rollback | fail2ban - work out the previous state
+  ansible.builtin.set_fact:
+    # Unknown (state file missing, e.g. applied with an older version): keep the old behaviour, restart.
+    rollback_f2b_previous: >-
+      {{ (rollback_f2b_state.content | b64decode | trim) if rollback_f2b_state.content is defined else 'active' }}
+  when: "'all' in rollback_wanted or 'fail2ban' in rollback_wanted"
+
+- name: Rollback | fail2ban - restart with the restored configuration (it was running before)
   ansible.builtin.systemd_service:
     name: fail2ban
     state: restarted
   failed_when: false
-  when: "'all' in rollback_wanted or 'fail2ban' in rollback_wanted"
+  when:
+    - "'all' in rollback_wanted or 'fail2ban' in rollback_wanted"
+    - rollback_f2b_previous == 'active'
+
+- name: Rollback | fail2ban - stop it (it was not running before server-hardening)
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: stopped
+    enabled: "{{ omit if rollback_f2b_previous == 'inactive' else false }}"
+  failed_when: false
+  when:
+    - "'all' in rollback_wanted or 'fail2ban' in rollback_wanted"
+    - rollback_f2b_previous in ['inactive', 'not-installed']
 
 # ---- sysctl ------------------------------------------------------------------
 - name: Rollback | sysctl - check for saved runtime values

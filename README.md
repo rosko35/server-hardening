@@ -159,7 +159,8 @@ make rollback CONFIRM=1 CATEGORIES=ssh,firewall
 ```
 
 Rollback restores original files (or deletes the ones this project created), re-validates and reloads sshd,
-disables ufw if it was inactive before, restores sysctl runtime values, previous shells and file modes.
+disables ufw if it was inactive before, restores sysctl runtime values, previous shells and file modes, and stops
+fail2ban again if it was not running before (so it does not keep running with the distro's default jail).
 Installed packages stay installed. Manual escape hatches are printed after every apply and documented in the guide,
 including how to get in through the provider's web console if SSH is broken.
 
@@ -198,7 +199,7 @@ that number describes a bare container, not a real server.
 | yamllint, ruff | locally + CI | no |
 | pytest: firewall plan logic, audit findings, file-mode logic, sshd parsing, rollback planning, every Jinja2 template rendered with StrictUndefined, Jinja syntax + filter names in all tasks, YAML validity, "every toggle defaults to off", "no reboot / package removal / Port" rules, Lynis parser + comparison, recap checker | locally + CI (Python 3.10–3.13) | no |
 | ansible-lint (production profile), `ansible-playbook --syntax-check` | CI | no |
-| **Integration** in a systemd Ubuntu 24.04 *and* Debian 12 container that mimics a web + mail VPS (sshd, nginx, a service on :587, key-only operator) | CI | **yes**: audit must not change `/etc`; `--check` must not change `/etc`; refusals (empty allow list, unacknowledged mail port, no key) must refuse; apply everything twice → second run `changed=0`; then `sshd -t`, a *new* key login works, password login is refused, the website is reachable through ufw, port 587 is filtered, fail2ban ignores the operator; Lynis before/after; rollback restores login, ufw, files, modes, shells and sysctl |
+| **Integration** in a systemd Ubuntu 24.04 *and* Debian 12 container that mimics a web + mail VPS (sshd, nginx, a service on :587, key-only operator) | CI | **yes**: audit must not change `/etc`; `--check` must not change `/etc`; refusals (empty allow list, unacknowledged mail port, no key) must refuse; apply everything twice → second run `changed=0`; then `sshd -t`, a *new* key login works, password login is refused, the website is reachable through ufw, port 587 is filtered, fail2ban ignores the operator; Lynis before/after; rollback restores login, ufw, files, modes, shells and sysctl and stops fail2ban again |
 
 ```bash
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate

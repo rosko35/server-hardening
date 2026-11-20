@@ -8,6 +8,27 @@
       or 'sudo ansible-playbook'). Find it with: echo $SSH_CLIENT   (first field) and re-run with
       -e harden_operator_ip=YOUR.IP.HERE
 
+- name: Fail2ban | State directory
+  ansible.builtin.file:
+    path: "{{ harden_backup_root }}/state"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# Rollback uses this to put the service back the way it was: a fail2ban that
+# only runs because of this project must not keep running with the distro's
+# default jail (and without the operator's IP in ignoreip) after a rollback.
+- name: Fail2ban | Remember whether fail2ban was installed / running before (once)
+  ansible.builtin.copy:
+    content: "{{ ('active' if fail2ban_active | bool else 'inactive') if fail2ban_installed | bool else 'not-installed' }}\n"
+    dest: "{{ harden_backup_root }}/state/fail2ban-previous-state"
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+  when: not ansible_check_mode
+
 - name: Fail2ban | Install fail2ban (and the systemd journal backend)
   ansible.builtin.include_role:
     name: common

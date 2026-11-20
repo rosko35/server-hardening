@@ -161,7 +161,8 @@ make rollback CONFIRM=1 CATEGORIES=ssh,firewall
 ```
 
 Geri alma, orijinal dosyaları geri yükler (ya da bu projenin oluşturduklarını siler), sshd'yi yeniden doğrulayıp reload
-eder, ufw önceden kapalıysa kapatır, sysctl çalışma zamanı değerlerini, önceki kabukları ve dosya izinlerini geri getirir.
+eder, ufw önceden kapalıysa kapatır, sysctl çalışma zamanı değerlerini, önceki kabukları ve dosya izinlerini geri getirir;
+fail2ban önceden çalışmıyorsa onu yeniden durdurur (dağıtımın varsayılan jail'iyle çalışmaya devam etmesin diye).
 Kurulan paketler kurulu kalır. Elle kurtulma yolları her uygulamadan sonra ekrana yazılır ve rehberde anlatılır;
 SSH bozulursa sağlayıcının web konsolundan nasıl girileceği de dahil.
 
@@ -200,7 +201,7 @@ yazar; o sayı gerçek bir sunucuyu değil, çıplak bir konteyneri anlatır.
 | yamllint, ruff | yerelde + CI | hayır |
 | pytest: güvenlik duvarı plan mantığı, denetim bulguları, dosya izni mantığı, sshd ayrıştırma, geri alma planlaması, her Jinja2 şablonunun StrictUndefined ile işlenmesi, tüm görevlerde Jinja sözdizimi + filtre adları, YAML geçerliliği, "her anahtar varsayılan olarak kapalı", "reboot / paket kaldırma / Port yok" kuralları, Lynis ayrıştırıcı + karşılaştırma, recap denetleyici | yerelde + CI (Python 3.10–3.13) | hayır |
 | ansible-lint (production profili), `ansible-playbook --syntax-check` | CI | hayır |
-| **Entegrasyon**: web + e-posta VPS'ini taklit eden systemd'li Ubuntu 24.04 *ve* Debian 12 konteyneri (sshd, nginx, :587'de bir servis, yalnızca anahtarlı operatör) | CI | **evet**: denetim `/etc`'yi değiştirmemeli; `--check` `/etc`'yi değiştirmemeli; reddetmeler (boş izin listesi, onaylanmamış e-posta portu, anahtar yok) reddetmeli; her şey iki kez uygulanır → ikinci çalıştırma `changed=0`; ardından `sshd -t`, *yeni* bir anahtarlı giriş çalışır, parola girişi reddedilir, web sitesine ufw üzerinden erişilir, 587 portu filtrelenir, fail2ban operatörü yok sayar; Lynis öncesi/sonrası; geri alma girişi, ufw'yi, dosyaları, izinleri, kabukları ve sysctl'i geri getirir |
+| **Entegrasyon**: web + e-posta VPS'ini taklit eden systemd'li Ubuntu 24.04 *ve* Debian 12 konteyneri (sshd, nginx, :587'de bir servis, yalnızca anahtarlı operatör) | CI | **evet**: denetim `/etc`'yi değiştirmemeli; `--check` `/etc`'yi değiştirmemeli; reddetmeler (boş izin listesi, onaylanmamış e-posta portu, anahtar yok) reddetmeli; her şey iki kez uygulanır → ikinci çalıştırma `changed=0`; ardından `sshd -t`, *yeni* bir anahtarlı giriş çalışır, parola girişi reddedilir, web sitesine ufw üzerinden erişilir, 587 portu filtrelenir, fail2ban operatörü yok sayar; Lynis öncesi/sonrası; geri alma girişi, ufw'yi, dosyaları, izinleri, kabukları ve sysctl'i geri getirir, fail2ban'i yeniden durdurur |
 
 ```bash
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
