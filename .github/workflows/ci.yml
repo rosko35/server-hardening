@@ -91,13 +91,37 @@ jobs:
           python-version: "3.12"
 
       - name: Install Ansible and test tools
+        # Network hiccups (PyPI, Galaxy, apt mirrors) are retried; the output
+        # of a step that still fails is attached as an annotation.
         run: |
-          pip install "ansible-core>=2.16,<2.18"
-          ansible-galaxy collection install -r requirements.yml
-          sudo apt-get update -q && sudo apt-get install -y -q sshpass
+          retry() { # retry <title> <command...>
+            local title=$1 n; shift
+            for n in 1 2 3 4; do
+              if "$@" > /tmp/retry.log 2>&1; then cat /tmp/retry.log; return 0; fi
+              cat /tmp/retry.log
+              echo "::warning::$title failed (attempt $n/4), retrying in $((n * 15)) s"
+              sleep $((n * 15))
+            done
+            python3 ci/annotate.py --title "$title failed 4 times" --raw --tail 40 /tmp/retry.log
+            return 1
+          }
+          retry "pip install ansible-core" pip install "ansible-core>=2.16,<2.18"
+          retry "ansible-galaxy collection install" ansible-galaxy collection install -r requirements.yml
+          retry "apt-get update" sudo apt-get update -q
+          retry "apt-get install sshpass" sudo apt-get install -y -q sshpass
+          ansible --version
 
       - name: Build the test target image (${{ matrix.base }})
-        run: docker build -t hardening-target --build-arg BASE=${{ matrix.base }} ci/
+        run: |
+          for n in 1 2 3; do
+            if docker build -t hardening-target --build-arg BASE=${{ matrix.base }} ci/ 2>&1 | tee /tmp/build.log; then
+              exit 0
+            fi
+            echo "::warning::docker build failed (attempt $n/3)"
+            sleep $((n * 20))
+          done
+          python3 ci/annotate.py --title "docker build failed" --raw --tail 40 /tmp/build.log
+          exit 1
 
       - name: Start the systemd container
         run: |
@@ -115,12 +139,23 @@ jobs:
 
       - name: Diagnostics on failure
         if: failure()
+        # Printed as log groups AND as annotations (readable without login).
         run: |
-          echo "::group::systemctl --failed"; docker exec target systemctl --failed --no-pager || true; echo "::endgroup::"
-          echo "::group::sshd -T"; docker exec target sshd -T || true; echo "::endgroup::"
-          echo "::group::ufw status"; docker exec target ufw status verbose || true; echo "::endgroup::"
+          diag() { # diag <title> <command...>
+            local title=$1; shift
+            echo "::group::$title"
+            "$@" > /tmp/diag.log 2>&1 || true
+            cat /tmp/diag.log
+            echo "::endgroup::"
+            python3 ci/annotate.py --level warning --raw --tail "${TAIL:-30}" --max-parts 1 --title "diag: $title" /tmp/diag.log
+          }
+          diag "systemctl --failed" docker exec target systemctl --failed --no-pager
+          diag "sshd -T (auth/port)" docker exec target sh -c 'sshd -T | grep -Ei "^(port|passwordauth|permitroot|pubkeyauth|kbdinter)"'
+          diag "ufw status" docker exec target ufw status verbose
+          diag "server-hardening files" docker exec target \
+            sh -c 'find /var/backups/server-hardening /etc/ssh/sshd_config.d /etc/sysctl.d -type f 2>&1 | head -60'
+          TAIL=60 diag "journal (errors)" docker exec target journalctl -p warning -n 60 --no-pager
           echo "::group::journal (last 200 lines)"; docker exec target journalctl -n 200 --no-pager || true; echo "::endgroup::"
-          echo "::group::backups"; docker exec target find /var/backups/server-hardening -type f || true; echo "::endgroup::"
 
       - name: Upload logs and reports
         if: always()

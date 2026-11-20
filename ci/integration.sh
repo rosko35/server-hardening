@@ -22,6 +22,8 @@ SUMMARY=${GITHUB_STEP_SUMMARY:-/dev/null}
 HOSTNAME_IN_REPORTS=target
 mkdir -p "$LOGS"
 export ANSIBLE_NOCOLOR=1 ANSIBLE_FORCE_COLOR=0 PY_COLORS=0
+# A command that fails outside an explicit assertion still leaves an annotation.
+trap 'echo "::error::integration.sh stopped unexpectedly at line $LINENO: $BASH_COMMAND"' ERR
 
 APPLY_ALL=(-e @ci/vars-apply.yml
   -e ssh_hardening_apply=true -e firewall_apply=true -e auto_updates_apply=true
@@ -29,10 +31,20 @@ APPLY_ALL=(-e @ci/vars-apply.yml
   -e file_permissions_apply=true)
 
 # ---------------------------------------------------------------- helpers ----
+# Job logs need a GitHub login, annotations do not: every failure is also
+# printed as ::error:: annotations (ci/annotate.py) so it can be read through
+# the public check-runs API (.../check-runs/<id>/annotations).
 group() { echo "::group::$*"; }
 endgroup() { echo "::endgroup::"; }
 pass() { echo "PASS: $*"; echo "- ✅ $*" >> "$SUMMARY"; }
-fail() { echo "::error::FAIL: $*"; echo "- ❌ $*" >> "$SUMMARY"; exit 1; }
+annotate() { # annotate <title> <file|-> [annotate.py options]
+  python3 ci/annotate.py --title "$@" || true
+}
+fail() { # fail <message> [log file whose failure excerpt should be attached]
+  echo "::error::FAIL: $1"; echo "- ❌ $1" >> "$SUMMARY"
+  if [ -n "${2:-}" ]; then annotate "${1:0:80}" "$2"; fi
+  exit 1
+}
 on_target() { docker exec target "$@"; }
 # grep that always reads its whole input (grep -q + pipefail can trip on SIGPIPE)
 contains() { grep "$@" >/dev/null; }
@@ -44,20 +56,39 @@ play() { # play <logname> <ansible-playbook args...>
   ansible-playbook -i "$INV" "$@" 2>&1 | tee "$LOGS/$name.log"
   local rc=${PIPESTATUS[0]}
   set -e
+  [ "$rc" -eq 0 ] || echo "ansible-playbook exited with rc=$rc" >> "$LOGS/$name.log"
   return "$rc"
 }
 
 must_succeed() { # must_succeed <logname> <args...>
   local name=$1
-  play "$@" || fail "$name: ansible-playbook failed (see the '$name' log group above)"
-  python3 scripts/check_recap.py "$LOGS/$name.log" || fail "$name: failed/unreachable hosts"
+  play "$@" || fail "$name: ansible-playbook failed" "$LOGS/$name.log"
+  python3 scripts/check_recap.py "$LOGS/$name.log" > "$LOGS/$name.recap" 2>&1 \
+    || { cat "$LOGS/$name.recap"; fail "$name: failed/unreachable hosts" "$LOGS/$name.log"; }
+  cat "$LOGS/$name.recap"
+}
+
+expect_changed_zero() { # expect_changed_zero <logname> <message>
+  python3 scripts/check_recap.py "$LOGS/$1.log" --expect-changed 0 > "$LOGS/$1.changed" 2>&1 \
+    || { cat "$LOGS/$1.changed"; annotate "$1: tasks that changed" "$LOGS/$1.changed" --raw --tail 60; fail "$2"; }
+  cat "$LOGS/$1.changed"
 }
 
 must_refuse() { # must_refuse <logname> <expected text> <args...>
   local name=$1 pattern=$2; shift 2
-  if play "$name" "$@"; then fail "$name: playbook should have refused but succeeded"; fi
-  grep -q -- "$pattern" "$LOGS/$name.log" || fail "$name: refused, but without the expected message: $pattern"
+  if play "$name" "$@"; then fail "$name: playbook should have refused but succeeded" "$LOGS/$name.log"; fi
+  grep -q -- "$pattern" "$LOGS/$name.log" \
+    || fail "$name: refused, but without the expected message: $pattern" "$LOGS/$name.log"
   pass "$name: refused as expected ('$pattern')"
+}
+
+diff_or_fail() { # diff_or_fail <message> <diff args...>
+  local msg=$1; shift
+  if ! diff "$@" > "$LOGS/last.diff"; then
+    cat "$LOGS/last.diff"
+    annotate "diff: ${msg:0:60}" "$LOGS/last.diff" --raw --tail 80
+    fail "$msg"
+  fi
 }
 
 snapshot_etc() { # content + permissions of every file under /etc
@@ -90,7 +121,7 @@ group "1. Audit (default settings) must not change the server"
 snapshot_etc "$LOGS/etc-before-audit.txt"
 must_succeed 01-audit site.yml
 snapshot_etc "$LOGS/etc-after-audit.txt"
-diff -u "$LOGS/etc-before-audit.txt" "$LOGS/etc-after-audit.txt" || fail "audit modified files under /etc"
+diff_or_fail "audit modified files under /etc" -u "$LOGS/etc-before-audit.txt" "$LOGS/etc-after-audit.txt"
 test -s "reports/$HOSTNAME_IN_REPORTS/audit-report.md" || fail "audit-report.md missing"
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['findings'], 'no findings'; print(d['summary'])" \
   "reports/$HOSTNAME_IN_REPORTS/audit-report.json" || fail "audit-report.json invalid"
@@ -122,9 +153,9 @@ on_target test ! -e /etc/ssh/sshd_config.d/01-server-hardening.conf || fail "ref
 on_target sh -c 'ufw status 2>/dev/null | grep -q "Status: active"' && fail "refused firewall run enabled ufw"
 snapshot_etc "$LOGS/etc-after-refusals.txt"
 # Installing the ufw package is allowed to happen before the refusal; config files must not change.
-diff <(grep -v '/etc/ufw\|/etc/default/ufw\|/etc/rsyslog.d\|/etc/logrotate.d\|ld.so.cache\|/etc/systemd/system' "$LOGS/etc-before-refusals.txt") \
-     <(grep -v '/etc/ufw\|/etc/default/ufw\|/etc/rsyslog.d\|/etc/logrotate.d\|ld.so.cache\|/etc/systemd/system' "$LOGS/etc-after-refusals.txt") \
-  || fail "a refused run modified configuration under /etc"
+diff_or_fail "a refused run modified configuration under /etc" \
+  <(grep -v '/etc/ufw\|/etc/default/ufw\|/etc/rsyslog.d\|/etc/logrotate.d\|ld.so.cache\|/etc/systemd/system' "$LOGS/etc-before-refusals.txt") \
+  <(grep -v '/etc/ufw\|/etc/default/ufw\|/etc/rsyslog.d\|/etc/logrotate.d\|ld.so.cache\|/etc/systemd/system' "$LOGS/etc-after-refusals.txt")
 pass "refusals left SSH and firewall untouched"
 endgroup
 
@@ -133,7 +164,7 @@ group "4. --check --diff of every category"
 snapshot_etc "$LOGS/etc-before-check.txt"
 must_succeed 04-check site.yml "${APPLY_ALL[@]}" --check --diff
 snapshot_etc "$LOGS/etc-after-check.txt"
-diff -u "$LOGS/etc-before-check.txt" "$LOGS/etc-after-check.txt" || fail "--check modified files under /etc"
+diff_or_fail "--check modified files under /etc" -u "$LOGS/etc-before-check.txt" "$LOGS/etc-after-check.txt"
 pass "check mode: no changes under /etc"
 endgroup
 
@@ -146,7 +177,7 @@ endgroup
 
 group "5b. Apply again - must report changed=0"
 must_succeed 05b-idempotence site.yml "${APPLY_ALL[@]}"
-python3 scripts/check_recap.py "$LOGS/05b-idempotence.log" --expect-changed 0 || fail "second apply was not idempotent"
+expect_changed_zero 05b-idempotence "second apply was not idempotent"
 pass "idempotence: second run changed=0"
 endgroup
 
@@ -190,7 +221,7 @@ endgroup
 # --------------------------------------------------------- 8. rollback -------
 group "8a. Rollback without confirmation only lists"
 must_succeed 08a-rollback-list rollback.yml
-python3 scripts/check_recap.py "$LOGS/08a-rollback-list.log" --expect-changed 0 || fail "unconfirmed rollback changed something"
+expect_changed_zero 08a-rollback-list "unconfirmed rollback changed something"
 on_target test -f /etc/ssh/sshd_config.d/01-server-hardening.conf || fail "unconfirmed rollback removed the drop-in"
 pass "rollback without CONFIRM changed nothing"
 endgroup
