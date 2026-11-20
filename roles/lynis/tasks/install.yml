@@ -1,10 +1,12 @@
 ---
 - name: Lynis | Install the distribution package
-  ansible.builtin.apt:
-    name: lynis
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: packages
+    apply:
+      tags: [always]
+  vars:
+    common_packages: [lynis] # noqa: var-naming[no-role-prefix]
   when: lynis_install_method == 'package'
 
 - name: Lynis | Install the pinned upstream release

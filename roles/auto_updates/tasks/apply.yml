@@ -7,11 +7,13 @@
     quiet: true
 
 - name: Auto-updates | Install unattended-upgrades
-  ansible.builtin.apt:
-    name: unattended-upgrades
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: packages
+    apply:
+      tags: [always]
+  vars:
+    common_packages: [unattended-upgrades] # noqa: var-naming[no-role-prefix]
 
 - name: Auto-updates | Back up the files we manage
   ansible.builtin.include_role:

@@ -9,13 +9,13 @@
       -e harden_operator_ip=YOUR.IP.HERE
 
 - name: Fail2ban | Install fail2ban (and the systemd journal backend)
-  ansible.builtin.apt:
-    name:
-      - fail2ban
-      - python3-systemd
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: packages
+    apply:
+      tags: [always]
+  vars:
+    common_packages: [fail2ban, python3-systemd] # noqa: var-naming[no-role-prefix]
 
 - name: Fail2ban | Back up the jail file
   ansible.builtin.include_role:

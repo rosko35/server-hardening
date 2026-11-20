@@ -24,11 +24,13 @@
          | firewall_plan(firewall_allowed_ports, common_ssh_port, firewall_acknowledge_closing, strict=true) }}
 
 - name: Firewall | Install ufw
-  ansible.builtin.apt:
-    name: ufw
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: packages
+    apply:
+      tags: [always]
+  vars:
+    common_packages: [ufw] # noqa: var-naming[no-role-prefix]
 
 - name: Firewall | State directory
   ansible.builtin.file:
