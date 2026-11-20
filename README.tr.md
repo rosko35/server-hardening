@@ -208,6 +208,16 @@ pip install -r requirements-dev.txt
 pytest && yamllint -s . && ruff check .
 ```
 
+Bir entegrasyon aşaması başarısız olursa, hata veren Ansible görevi ve günlüğün son satırları ayrıca
+**annotation** olarak yayımlanır (`ci/annotate.py`); tanılama adımı da `systemctl --failed`, `sshd -T`, `ufw status`
+çıktısını ve journal uyarılarını aynı şekilde ekler. Annotation'lar çalıştırma sayfasında görünür ve oturum açmadan
+okunabilir:
+
+```bash
+curl -s https://api.github.com/repos/rosko35/server-hardening/commits/<sha>/check-runs   # her kaydın bir "annotations_url" alanı var
+curl -s <annotations_url>
+```
+
 ## Proje yapısı
 
 ```text

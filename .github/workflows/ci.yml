@@ -154,7 +154,9 @@ jobs:
           diag "ufw status" docker exec target ufw status verbose
           diag "server-hardening files" docker exec target \
             sh -c 'find /var/backups/server-hardening /etc/ssh/sshd_config.d /etc/sysctl.d -type f 2>&1 | head -60'
-          TAIL=60 diag "journal (errors)" docker exec target journalctl -p warning -n 60 --no-pager
+          # The container shares the runner's kernel: drop kernel/boot noise of the host.
+          TAIL=60 diag "journal (warnings)" docker exec target sh -c \
+            'journalctl -p warning -n 300 --no-pager | grep -Ev " (kernel|systemd-fstab-generator.*|setup-dm-snapshot)(\[[0-9]+\])?: |pam_env"'
           echo "::group::journal (last 200 lines)"; docker exec target journalctl -n 200 --no-pager || true; echo "::endgroup::"
 
       - name: Upload logs and reports

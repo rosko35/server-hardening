@@ -206,6 +206,15 @@ pip install -r requirements-dev.txt
 pytest && yamllint -s . && ruff check .
 ```
 
+When an integration stage fails, the failing Ansible task and the end of its log are also posted as
+**annotations** (`ci/annotate.py`), and the diagnostics step adds `systemctl --failed`, `sshd -T`, `ufw status` and
+the journal's warnings the same way. Annotations are shown on the run page and can be read without logging in:
+
+```bash
+curl -s https://api.github.com/repos/rosko35/server-hardening/commits/<sha>/check-runs   # each run has an "annotations_url"
+curl -s <annotations_url>
+```
+
 ## Project layout
 
 ```text
