@@ -193,6 +193,9 @@ make lynis-before LOCAL=1        # eksikse lynis paketini kurar, sonra tarar (1�
 Sonunda beklenen: `Lynis hardening index (before): NN / 100`.
 Dosyalar: `reports/<host>/lynis-before.dat` (ham) ve `lynis-before.md` (okunabilir).
 Sunucudaki tek değişiklik `lynis` paketinin kurulmasıdır (ve raporu `/var/log/server-hardening/` altında).
+apt'nin paket listelerinde `lynis` henüz yoksa (örneğin listeleri silinmiş bir bulut imajında), kurulumdan önce
+listeler `apt-get update` ile yenilenir; bu, yalnızca paket listelerini günceller, başka bir şey kurmaz. Aynısı ufw,
+fail2ban ve unattended-upgrades kurulumu için de geçerlidir.
 
 ## 8. Her seferinde tek kategori uygulayın
 

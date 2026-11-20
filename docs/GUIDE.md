@@ -193,6 +193,9 @@ make lynis-before LOCAL=1        # installs the lynis package if missing, then s
 Expected at the end: `Lynis hardening index (before): NN / 100`.
 Files: `reports/<host>/lynis-before.dat` (raw) and `lynis-before.md` (readable).
 The only change to the server is installing the `lynis` package (and its report in `/var/log/server-hardening/`).
+If apt's package lists do not know `lynis` yet (for example on a cloud image whose lists were deleted), they are
+refreshed with `apt-get update` first; that only updates the package lists, it installs nothing else. The same
+applies when ufw, fail2ban or unattended-upgrades are installed.
 
 ## 8. Apply one category at a time
 

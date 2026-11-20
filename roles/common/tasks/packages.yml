@@ -8,11 +8,13 @@
 # whether every package has an install candidate and refresh the lists if not.
 - name: Packages | Check that apt has an install candidate for each package
   ansible.builtin.shell: |
-    set -u
+    set -u -o pipefail
     for p in {{ common_packages | map('quote') | join(' ') }}; do
-      apt-cache policy "$p" 2>/dev/null | grep -Eq '^[[:space:]]*Candidate:[[:space:]]+[^([:space:]]' || echo "$p"
+      apt-cache policy "$p" 2>/dev/null | grep -E '^[[:space:]]*Candidate:[[:space:]]+[^([:space:]]' >/dev/null || echo "$p"
     done
     exit 0
+  args:
+    executable: /bin/bash
   register: common_packages_missing
   changed_when: false
   check_mode: false
