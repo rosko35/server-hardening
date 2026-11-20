@@ -46,6 +46,7 @@ fail() { # fail <message> [log file whose failure excerpt should be attached]
   exit 1
 }
 on_target() { docker exec target "$@"; }
+on_target_stdin() { docker exec -i target "$@"; } # without -i the command gets an empty stdin
 # grep that always reads its whole input (grep -q + pipefail can trip on SIGPIPE)
 contains() { grep "$@" >/dev/null; }
 
@@ -234,13 +235,16 @@ key_login || fail "key login fails after rollback"
 password_login || fail "password login not restored by rollback"
 on_target ufw status | contains "Status: inactive" || fail "ufw still active after rollback"
 mail_ok || fail "port 587 not reachable after rollback"
-on_target md5sum -c --quiet - < "$LOGS/login.defs.orig.md5" || fail "login.defs not restored"
+on_target_stdin md5sum -c --quiet - < "$LOGS/login.defs.orig.md5" || fail "login.defs not restored"
 [ "$(on_target stat -c %a /etc/crontab)" = 644 ] || fail "/etc/crontab mode not restored"
 on_target getent passwd svcdemo | contains /bin/bash || fail "svcdemo shell not restored"
 [ "$(on_target sysctl -n net.ipv4.conf.all.accept_redirects)" = "$ORIG_REDIRECTS" ] || fail "sysctl runtime value not restored"
 on_target test ! -e /etc/fail2ban/jail.d/server-hardening.local || fail "fail2ban jail still present"
+# fail2ban was not installed before: it must not keep running with the distro's default jail.
+if on_target systemctl is-active --quiet fail2ban; then fail "fail2ban still running after rollback (it was not before)"; fi
+on_target systemctl is-enabled --quiet fail2ban 2>/dev/null && fail "fail2ban still enabled after rollback (it was not before)"
 on_target test ! -e /etc/apt/apt.conf.d/52server-hardening-unattended || fail "unattended config still present"
-pass "rollback: original SSH/firewall/login.defs/modes/shells/sysctl restored"
+pass "rollback: original SSH/firewall/login.defs/modes/shells/sysctl restored, fail2ban stopped again"
 endgroup
 
 echo "All integration stages passed."
